@@ -124,7 +124,7 @@ async function readDirIfPresent(dir: string): Promise<string[]> {
   }
 }
 
-function assertReposConfig(value: unknown): asserts value is ReposConfig {
+export function assertReposConfig(value: unknown): asserts value is ReposConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("repos config must be an object");
   }
@@ -324,4 +324,19 @@ export async function getActivePid(): Promise<number[] | null> {
     if (Number.isInteger(n) && n > 0) pids.push(n);
   }
   return pids;
+}
+
+export async function getOvernightStartedAtMs(): Promise<number | null> {
+  const home = resolveSiegeHome();
+  const target = await resolveSafePath(
+    path.join(home, "overnight.pid"),
+    home,
+  );
+  try {
+    const stat = await fsp.stat(target);
+    return stat.mtimeMs;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
 }
