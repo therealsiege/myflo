@@ -10,7 +10,9 @@ import {
   GhError,
   ghAuthStatus,
   listIssues,
+  listIssuesAcrossRepos,
   listLabels,
+  listOpenSiegePRIssueNumbers,
   listProjectItems,
   listPRsForBranch,
 } from "./gh";
@@ -475,5 +477,199 @@ describe("error handling", () => {
     mockOk("", "github.com\n  ✓ Logged in\n");
     const result = await ghAuthStatus();
     expect(result).toEqual({ authenticated: true });
+  });
+});
+
+describe("listOpenSiegePRIssueNumbers", () => {
+  it("calls gh with --state open and returns issue numbers parsed from siege/issue-N heads", async () => {
+    mockOk(
+      JSON.stringify([
+        { headRefName: "siege/issue-12" },
+        { headRefName: "feature/unrelated" },
+        { headRefName: "siege/issue-45" },
+        { headRefName: "siege/issue-" },
+        { headRefName: "siege/issue-x" },
+      ]),
+    );
+    const result = await listOpenSiegePRIssueNumbers("foo/bar");
+    expect(result).toEqual([12, 45]);
+
+    const { args } = lastCall();
+    expect(args).toEqual([
+      "pr",
+      "list",
+      "-R",
+      "foo/bar",
+      "--state",
+      "open",
+      "--limit",
+      "1000",
+      "--json",
+      "headRefName",
+    ]);
+  });
+
+  it("returns [] when there are no open PRs", async () => {
+    mockOk("[]");
+    expect(await listOpenSiegePRIssueNumbers("foo/bar")).toEqual([]);
+  });
+
+  it("rejects malformed repo", async () => {
+    await expect(listOpenSiegePRIssueNumbers("nope")).rejects.toThrow(
+      /invalid repo/,
+    );
+    expect(execFileMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("listIssuesAcrossRepos", () => {
+  it("returns [] items and [] errors when given no repos", async () => {
+    const result = await listIssuesAcrossRepos([]);
+    expect(result).toEqual({ items: [], errors: [] });
+    expect(execFileMock).not.toHaveBeenCalled();
+  });
+
+  it("fans out per repo and merges results", async () => {
+    const calls: { args: string[] }[] = [];
+    execFileMock.mockImplementation((...rest: unknown[]) => {
+      const args = rest[1] as string[];
+      const cb = rest[rest.length - 1] as ExecFileArgs[3];
+      calls.push({ args });
+
+      if (args[0] === "issue") {
+        const repo = args[args.indexOf("-R") + 1];
+        if (repo === "foo/a") {
+          cb(
+            null,
+            JSON.stringify([
+              {
+                number: 1,
+                title: "A1",
+                body: "",
+                url: "https://gh/foo/a/1",
+                labels: [],
+                assignees: [],
+                state: "OPEN",
+              },
+            ]),
+            "",
+          );
+        } else if (repo === "foo/b") {
+          cb(
+            null,
+            JSON.stringify([
+              {
+                number: 2,
+                title: "B2",
+                body: "",
+                url: "https://gh/foo/b/2",
+                labels: [],
+                assignees: [],
+                state: "OPEN",
+              },
+            ]),
+            "",
+          );
+        } else {
+          cb(null, "[]", "");
+        }
+        return;
+      }
+      if (args[0] === "pr") {
+        const repo = args[args.indexOf("-R") + 1];
+        if (repo === "foo/a") {
+          cb(null, JSON.stringify([{ headRefName: "siege/issue-1" }]), "");
+        } else {
+          cb(null, "[]", "");
+        }
+        return;
+      }
+      cb(new Error("unexpected"), "", "");
+    });
+
+    const result = await listIssuesAcrossRepos([
+      { repo: "foo/a" },
+      { repo: "foo/b" },
+    ]);
+
+    expect(result.errors).toEqual([]);
+    expect(result.items).toHaveLength(2);
+    const aResult = result.items.find((r) => r.repo === "foo/a");
+    const bResult = result.items.find((r) => r.repo === "foo/b");
+    expect(aResult?.issues.map((i) => i.number)).toEqual([1]);
+    expect(aResult?.openSiegeIssueNumbers).toEqual([1]);
+    expect(bResult?.issues.map((i) => i.number)).toEqual([2]);
+    expect(bResult?.openSiegeIssueNumbers).toEqual([]);
+
+    // Exactly 2 gh calls per repo (issues + PRs) — N+1 prevention
+    const repoACalls = calls.filter((c) => c.args.includes("foo/a"));
+    const repoBCalls = calls.filter((c) => c.args.includes("foo/b"));
+    expect(repoACalls).toHaveLength(2);
+    expect(repoBCalls).toHaveLength(2);
+  });
+
+  it("passes search filter through to listIssues", async () => {
+    const calls: string[][] = [];
+    execFileMock.mockImplementation((...rest: unknown[]) => {
+      const args = rest[1] as string[];
+      const cb = rest[rest.length - 1] as ExecFileArgs[3];
+      calls.push(args);
+      if (args[0] === "issue") cb(null, "[]", "");
+      else cb(null, "[]", "");
+    });
+
+    await listIssuesAcrossRepos([
+      { repo: "foo/a", search: "label:overnight-ok state:open" },
+    ]);
+
+    const issueCall = calls.find((c) => c[0] === "issue");
+    expect(issueCall).toBeDefined();
+    expect(issueCall).toContain("--search");
+    expect(issueCall).toContain("label:overnight-ok state:open");
+  });
+
+  it("collects errors per repo via allSettled without short-circuiting", async () => {
+    execFileMock.mockImplementation((...rest: unknown[]) => {
+      const args = rest[1] as string[];
+      const cb = rest[rest.length - 1] as ExecFileArgs[3];
+      const repo = args[args.indexOf("-R") + 1];
+      if (repo === "foo/broken") {
+        const err = Object.assign(new Error("exit 1"), {
+          code: 1,
+        }) as NodeJS.ErrnoException;
+        cb(err, "", "API rate limit exceeded");
+        return;
+      }
+      if (args[0] === "issue") {
+        cb(
+          null,
+          JSON.stringify([
+            {
+              number: 7,
+              title: "ok",
+              body: "",
+              url: "u",
+              labels: [],
+              assignees: [],
+              state: "OPEN",
+            },
+          ]),
+          "",
+        );
+      } else {
+        cb(null, "[]", "");
+      }
+    });
+
+    const result = await listIssuesAcrossRepos([
+      { repo: "foo/ok" },
+      { repo: "foo/broken" },
+    ]);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].repo).toBe("foo/ok");
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].repo).toBe("foo/broken");
+    expect(result.errors[0].message).toMatch(/rate limit/i);
   });
 });
