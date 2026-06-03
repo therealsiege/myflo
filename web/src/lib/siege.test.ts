@@ -384,7 +384,7 @@ describe("readDesktopReports / readDesktopReport", () => {
     );
     await fsp.writeFile(
       path.join(fakeHome, "Desktop", "siege-2026-06-02.md"),
-      "# new\n",
+      "# new body\n",
     );
     await fsp.writeFile(
       path.join(fakeHome, "Desktop", "unrelated.txt"),
@@ -397,6 +397,12 @@ describe("readDesktopReports / readDesktopReport", () => {
       "siege-2026-06-01.md",
     ]);
     expect(reports[0].date).toBe("2026-06-02");
+    expect(reports[0].bytes).toBe(Buffer.byteLength("# new body\n", "utf8"));
+    expect(reports[1].bytes).toBe(Buffer.byteLength("# old\n", "utf8"));
+    // mtime should be an ISO timestamp string
+    expect(reports[0].mtime).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/,
+    );
   });
 
   it("reads the contents of a named report", async () => {

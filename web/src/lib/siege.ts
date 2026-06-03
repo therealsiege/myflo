@@ -69,6 +69,8 @@ export interface RunDetail {
 export interface DesktopReport {
   filename: string;
   date: string;
+  bytes: number;
+  mtime: string;
 }
 
 const RUN_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -550,7 +552,14 @@ export async function readDesktopReports(): Promise<DesktopReport[]> {
     if (!m) continue;
     const full = await resolveSafePath(path.join(desktop, filename), desktop);
     const stat = await fsp.stat(full).catch(() => null);
-    if (stat?.isFile()) reports.push({ filename, date: m[1] });
+    if (stat?.isFile()) {
+      reports.push({
+        filename,
+        date: m[1],
+        bytes: stat.size,
+        mtime: new Date(stat.mtimeMs).toISOString(),
+      });
+    }
   }
   reports.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   return reports;
