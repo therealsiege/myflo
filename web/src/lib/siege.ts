@@ -40,6 +40,32 @@ export interface ItemResult {
   url: string;
 }
 
+export interface RunOutcomeCounts {
+  [status: string]: number;
+}
+
+export interface RunSummary {
+  date: string;
+  stamp: string;
+  logDir: string;
+  itemCount: number;
+  outcomes: RunOutcomeCounts;
+  startedAt: string | null;
+  endedAt: string | null;
+}
+
+export interface RunItemDetail extends ItemResult {
+  logPath: string | null;
+  planPath: string | null;
+  reviewPath: string | null;
+}
+
+export interface RunDetail {
+  stamp: string;
+  logDir: string;
+  items: RunItemDetail[];
+}
+
 export interface DesktopReport {
   filename: string;
   date: string;
@@ -281,6 +307,174 @@ function parseItemResult(raw: string): ItemResult | null {
     ts: typeof o.ts === "string" ? o.ts : "",
     url: typeof o.url === "string" ? o.url : "",
   };
+}
+
+export function assertRunStamp(stamp: string): void {
+  if (typeof stamp !== "string" || !RUN_STAMP_RE.test(stamp)) {
+    throw new Error(
+      `invalid run stamp: ${JSON.stringify(stamp)} (expected YYYYMMDD-HHMMSS)`,
+    );
+  }
+}
+
+interface RunItemFiles {
+  result: string;
+  log: string | null;
+  plan: string | null;
+  review: string | null;
+}
+
+const ISSUE_RESULT_RE = /^issue-(\d+)\.result\.json$/;
+
+async function collectRunItemFiles(runDir: string): Promise<RunItemFiles[]> {
+  const home = resolveSiegeHome();
+  const itemsDir = await resolveSafePath(path.join(runDir, "items"), home);
+  const repoDirs = await readDirIfPresent(itemsDir);
+
+  const files: RunItemFiles[] = [];
+  for (const repoDir of repoDirs) {
+    const repoPath = await resolveSafePath(path.join(itemsDir, repoDir), home);
+    const stat = await fsp.stat(repoPath).catch(() => null);
+    if (!stat?.isDirectory()) continue;
+
+    const entries = await readDirIfPresent(repoPath);
+    const entrySet = new Set(entries);
+    for (const f of entries) {
+      const m = ISSUE_RESULT_RE.exec(f);
+      if (!m) continue;
+      const issueNum = m[1];
+      const resultPath = await resolveSafePath(path.join(repoPath, f), home);
+      const logName = `issue-${issueNum}.log`;
+      const planName = `issue-${issueNum}.plan.json`;
+      const reviewName = `issue-${issueNum}.review.json`;
+      files.push({
+        result: resultPath,
+        log: entrySet.has(logName)
+          ? await resolveSafePath(path.join(repoPath, logName), home)
+          : null,
+        plan: entrySet.has(planName)
+          ? await resolveSafePath(path.join(repoPath, planName), home)
+          : null,
+        review: entrySet.has(reviewName)
+          ? await resolveSafePath(path.join(repoPath, reviewName), home)
+          : null,
+      });
+    }
+  }
+  return files;
+}
+
+async function summarizeRun(date: string, run: RunInfo): Promise<RunSummary> {
+  const files = await collectRunItemFiles(run.logDir);
+  const outcomes: RunOutcomeCounts = {};
+  let itemCount = 0;
+  let startedMs: number | null = null;
+  let endedMs: number | null = null;
+
+  for (const f of files) {
+    const raw = await readTextIfPresent(f.result);
+    if (raw === null) continue;
+    const parsed = parseItemResult(raw);
+    if (!parsed) continue;
+    itemCount += 1;
+    const status = parsed.status || "unknown";
+    outcomes[status] = (outcomes[status] ?? 0) + 1;
+
+    const stat = await fsp.stat(f.result).catch(() => null);
+    if (stat) {
+      const ms = stat.mtimeMs;
+      if (startedMs === null || ms < startedMs) startedMs = ms;
+      if (endedMs === null || ms > endedMs) endedMs = ms;
+    }
+  }
+
+  return {
+    date,
+    stamp: run.stamp,
+    logDir: run.logDir,
+    itemCount,
+    outcomes,
+    startedAt: startedMs === null ? null : new Date(startedMs).toISOString(),
+    endedAt: endedMs === null ? null : new Date(endedMs).toISOString(),
+  };
+}
+
+export async function listRecentRuns(limit = 30): Promise<RunSummary[]> {
+  if (
+    typeof limit !== "number" ||
+    !Number.isInteger(limit) ||
+    limit < 1
+  ) {
+    throw new Error("limit must be a positive integer");
+  }
+
+  const summaries: RunSummary[] = [];
+  const dates = await listRunDates();
+  for (const date of dates) {
+    const runs = await listRuns(date);
+    for (const run of runs) {
+      summaries.push(await summarizeRun(date, run));
+      if (summaries.length >= limit) {
+        summaries.sort((a, b) => (a.stamp < b.stamp ? 1 : a.stamp > b.stamp ? -1 : 0));
+        return summaries.slice(0, limit);
+      }
+    }
+  }
+  summaries.sort((a, b) => (a.stamp < b.stamp ? 1 : a.stamp > b.stamp ? -1 : 0));
+  return summaries;
+}
+
+export class RunNotFoundError extends Error {
+  readonly stamp: string;
+  constructor(stamp: string) {
+    super(`run not found: ${stamp}`);
+    this.name = "RunNotFoundError";
+    this.stamp = stamp;
+  }
+}
+
+export async function getRunDetail(stamp: string): Promise<RunDetail> {
+  assertRunStamp(stamp);
+
+  const home = resolveSiegeHome();
+  const logsRoot = await resolveSafePath(path.join(home, "logs"), home);
+  const dates = (await readDirIfPresent(logsRoot))
+    .filter((name) => RUN_DATE_RE.test(name))
+    .sort()
+    .reverse();
+
+  let runDir: string | null = null;
+  for (const date of dates) {
+    const candidate = await resolveSafePath(
+      path.join(logsRoot, date, stamp),
+      home,
+    );
+    const stat = await fsp.stat(candidate).catch(() => null);
+    if (stat?.isDirectory()) {
+      runDir = candidate;
+      break;
+    }
+  }
+
+  if (runDir === null) throw new RunNotFoundError(stamp);
+
+  const files = await collectRunItemFiles(runDir);
+  const items: RunItemDetail[] = [];
+  for (const f of files) {
+    const raw = await readTextIfPresent(f.result);
+    if (raw === null) continue;
+    const parsed = parseItemResult(raw);
+    if (!parsed) continue;
+    items.push({
+      ...parsed,
+      logPath: f.log,
+      planPath: f.plan,
+      reviewPath: f.review,
+    });
+  }
+  items.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
+
+  return { stamp, logDir: runDir, items };
 }
 
 export interface LastAttempt {

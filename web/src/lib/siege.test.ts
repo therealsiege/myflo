@@ -25,7 +25,9 @@ import {
   ConflictError,
   getActivePid,
   getLastAttempt,
+  getRunDetail,
   killSiege,
+  listRecentRuns,
   listRunDates,
   listRuns,
   readConfig,
@@ -34,6 +36,7 @@ import {
   readRepos,
   readRunItemResults,
   readSkills,
+  RunNotFoundError,
   startSiege,
   toRepoSafe,
   writeRepos,
@@ -731,5 +734,298 @@ describe("killSiege", () => {
     const result = await killSiege();
 
     expect(result).toEqual({ killed: [100, 200, 300], method: "graceful" });
+  });
+});
+
+describe("listRecentRuns", () => {
+  async function writeItem(
+    date: string,
+    stamp: string,
+    repoSafe: string,
+    issueNum: number,
+    body: Record<string, unknown>,
+    extras: { plan?: boolean; review?: boolean; log?: boolean } = {},
+  ): Promise<string> {
+    const dir = path.join(
+      siegeHome,
+      "logs",
+      date,
+      stamp,
+      "items",
+      repoSafe,
+    );
+    await fsp.mkdir(dir, { recursive: true });
+    const resultPath = path.join(dir, `issue-${issueNum}.result.json`);
+    await fsp.writeFile(resultPath, JSON.stringify(body), "utf8");
+    if (extras.plan) {
+      await fsp.writeFile(
+        path.join(dir, `issue-${issueNum}.plan.json`),
+        "{}",
+        "utf8",
+      );
+    }
+    if (extras.review) {
+      await fsp.writeFile(
+        path.join(dir, `issue-${issueNum}.review.json`),
+        "{}",
+        "utf8",
+      );
+    }
+    if (extras.log) {
+      await fsp.writeFile(
+        path.join(dir, `issue-${issueNum}.log`),
+        "log line\n",
+        "utf8",
+      );
+    }
+    return resultPath;
+  }
+
+  it("returns [] when logs dir is missing", async () => {
+    expect(await listRecentRuns()).toEqual([]);
+  });
+
+  it("summarizes runs newest-first with item count and outcomes", async () => {
+    await writeItem("2026-06-01", "20260601-120000", "owner_a", 1, {
+      status: "merged",
+      ts: "2026-06-01T12:00:00Z",
+    });
+    await writeItem("2026-06-02", "20260602-100000", "owner_a", 2, {
+      status: "merged",
+      ts: "2026-06-02T10:00:00Z",
+    });
+    await writeItem("2026-06-02", "20260602-100000", "owner_a", 3, {
+      status: "skipped",
+      ts: "2026-06-02T10:05:00Z",
+    });
+    await writeItem("2026-06-02", "20260602-180000", "owner_b", 7, {
+      status: "merged",
+      ts: "2026-06-02T18:00:00Z",
+    });
+
+    const runs = await listRecentRuns();
+    expect(runs.map((r) => r.stamp)).toEqual([
+      "20260602-180000",
+      "20260602-100000",
+      "20260601-120000",
+    ]);
+    expect(runs[0]).toMatchObject({
+      date: "2026-06-02",
+      itemCount: 1,
+      outcomes: { merged: 1 },
+    });
+    expect(runs[1]).toMatchObject({
+      date: "2026-06-02",
+      itemCount: 2,
+      outcomes: { merged: 1, skipped: 1 },
+    });
+    for (const r of runs) {
+      expect(typeof r.startedAt).toBe("string");
+      expect(typeof r.endedAt).toBe("string");
+      expect(r.logDir.endsWith(r.stamp)).toBe(true);
+    }
+  });
+
+  it("honors the limit param", async () => {
+    for (let i = 0; i < 5; i++) {
+      const stamp = `20260602-12000${i}`;
+      await writeItem("2026-06-02", stamp, "owner_a", i + 1, {
+        status: "done",
+      });
+    }
+    const runs = await listRecentRuns(3);
+    expect(runs).toHaveLength(3);
+    expect(runs.map((r) => r.stamp)).toEqual([
+      "20260602-120004",
+      "20260602-120003",
+      "20260602-120002",
+    ]);
+  });
+
+  it("rejects bad limit values", async () => {
+    await expect(listRecentRuns(0)).rejects.toThrow(/positive integer/);
+    await expect(listRecentRuns(-1)).rejects.toThrow(/positive integer/);
+    await expect(listRecentRuns(1.5)).rejects.toThrow(/positive integer/);
+  });
+
+  it("tolerates result.json files missing a status field", async () => {
+    await writeItem("2026-06-02", "20260602-180000", "owner_a", 1, {
+      // no status key
+      ts: "2026-06-02T18:00:00Z",
+    });
+    const runs = await listRecentRuns();
+    expect(runs).toHaveLength(1);
+    expect(runs[0].itemCount).toBe(1);
+    // parseItemResult coerces missing status to "" — tally that under "unknown"
+    expect(runs[0].outcomes).toEqual({ unknown: 1 });
+  });
+
+  it("returns empty outcomes and null timestamps for an empty run", async () => {
+    await fsp.mkdir(
+      path.join(siegeHome, "logs", "2026-06-02", "20260602-180000"),
+      { recursive: true },
+    );
+    const runs = await listRecentRuns();
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
+      date: "2026-06-02",
+      stamp: "20260602-180000",
+      itemCount: 0,
+      outcomes: {},
+      startedAt: null,
+      endedAt: null,
+    });
+    expect(
+      runs[0].logDir.endsWith(
+        path.join("logs", "2026-06-02", "20260602-180000"),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("getRunDetail", () => {
+  async function seedItem(
+    date: string,
+    stamp: string,
+    repoSafe: string,
+    issueNum: number,
+    body: Record<string, unknown>,
+    extras: { plan?: boolean; review?: boolean; log?: boolean } = {},
+  ): Promise<void> {
+    const dir = path.join(
+      siegeHome,
+      "logs",
+      date,
+      stamp,
+      "items",
+      repoSafe,
+    );
+    await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(
+      path.join(dir, `issue-${issueNum}.result.json`),
+      JSON.stringify(body),
+      "utf8",
+    );
+    if (extras.plan) {
+      await fsp.writeFile(
+        path.join(dir, `issue-${issueNum}.plan.json`),
+        "{}",
+        "utf8",
+      );
+    }
+    if (extras.review) {
+      await fsp.writeFile(
+        path.join(dir, `issue-${issueNum}.review.json`),
+        "{}",
+        "utf8",
+      );
+    }
+    if (extras.log) {
+      await fsp.writeFile(
+        path.join(dir, `issue-${issueNum}.log`),
+        "log line\n",
+        "utf8",
+      );
+    }
+  }
+
+  it("rejects malformed stamps", async () => {
+    await expect(getRunDetail("../etc")).rejects.toThrow(/invalid run stamp/);
+    await expect(getRunDetail("2026-06-02")).rejects.toThrow(
+      /invalid run stamp/,
+    );
+    await expect(getRunDetail("20260602")).rejects.toThrow(/invalid run stamp/);
+  });
+
+  it("throws RunNotFoundError for an unknown stamp", async () => {
+    await expect(getRunDetail("20260602-180000")).rejects.toBeInstanceOf(
+      RunNotFoundError,
+    );
+  });
+
+  it("returns items with plan/review/log paths when present, null otherwise", async () => {
+    await seedItem(
+      "2026-06-02",
+      "20260602-180000",
+      "owner_a",
+      4,
+      {
+        repo: "owner/a",
+        issue: 4,
+        title: "first",
+        status: "merged",
+        stage: "merge",
+        branch: "siege/issue-4",
+        ts: "2026-06-02T18:00:00Z",
+      },
+      { plan: true, review: true, log: true },
+    );
+    await seedItem(
+      "2026-06-02",
+      "20260602-180000",
+      "owner_a",
+      5,
+      {
+        repo: "owner/a",
+        issue: 5,
+        title: "second",
+        status: "skipped",
+        stage: "skip",
+        branch: "",
+        ts: "2026-06-02T18:05:00Z",
+      },
+      { plan: true },
+    );
+
+    const detail = await getRunDetail("20260602-180000");
+    expect(detail.stamp).toBe("20260602-180000");
+    expect(detail.logDir.endsWith("20260602-180000")).toBe(true);
+    expect(detail.items).toHaveLength(2);
+
+    // sorted newest ts first
+    expect(detail.items.map((i) => i.issue)).toEqual([5, 4]);
+
+    const item4 = detail.items.find((i) => i.issue === 4)!;
+    expect(item4.planPath).toBeTruthy();
+    expect(item4.reviewPath).toBeTruthy();
+    expect(item4.logPath).toBeTruthy();
+    expect(item4.planPath?.endsWith("issue-4.plan.json")).toBe(true);
+    expect(item4.reviewPath?.endsWith("issue-4.review.json")).toBe(true);
+    expect(item4.logPath?.endsWith("issue-4.log")).toBe(true);
+
+    const item5 = detail.items.find((i) => i.issue === 5)!;
+    expect(item5.planPath?.endsWith("issue-5.plan.json")).toBe(true);
+    expect(item5.reviewPath).toBeNull();
+    expect(item5.logPath).toBeNull();
+  });
+
+  it("finds the run across multiple date directories", async () => {
+    await seedItem(
+      "2026-06-01",
+      "20260601-120000",
+      "owner_a",
+      1,
+      { status: "done" },
+    );
+    await seedItem(
+      "2026-06-03",
+      "20260603-090000",
+      "owner_a",
+      2,
+      { status: "merged" },
+    );
+    const detail = await getRunDetail("20260601-120000");
+    expect(detail.stamp).toBe("20260601-120000");
+    expect(detail.items).toHaveLength(1);
+    expect(detail.items[0]).toMatchObject({ status: "done" });
+  });
+
+  it("returns an empty items list when the run dir has no items", async () => {
+    await fsp.mkdir(
+      path.join(siegeHome, "logs", "2026-06-02", "20260602-180000"),
+      { recursive: true },
+    );
+    const detail = await getRunDetail("20260602-180000");
+    expect(detail.items).toEqual([]);
   });
 });
