@@ -1,9 +1,26 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
+const { spawnMock } = vi.hoisted(() => ({
+  spawnMock: vi.fn(),
+}));
+
+vi.mock("node:child_process", async () => {
+  const actual =
+    await vi.importActual<typeof import("node:child_process")>(
+      "node:child_process",
+    );
+  return {
+    ...actual,
+    spawn: spawnMock,
+  };
+});
+
 import {
+  buildStartArgs,
+  ConflictError,
   getActivePid,
   listRunDates,
   listRuns,
@@ -13,11 +30,17 @@ import {
   readRepos,
   readRunItemResults,
   readSkills,
+  startSiege,
   writeRepos,
   type ReposConfig,
 } from "./siege";
 
-const ENV_KEYS = ["SIEGE_HOME", "HOME"] as const;
+const ENV_KEYS = [
+  "SIEGE_HOME",
+  "HOME",
+  "SIEGE_START_POLL_TIMEOUT_MS",
+  "SIEGE_START_POLL_INTERVAL_MS",
+] as const;
 
 const FIXTURE_REPOS: ReposConfig = {
   defaults: {
@@ -57,6 +80,8 @@ beforeEach(async () => {
 
   process.env.SIEGE_HOME = siegeHome;
   process.env.HOME = fakeHome;
+
+  spawnMock.mockReset();
 });
 
 afterEach(async () => {
@@ -241,5 +266,215 @@ describe("getActivePid", () => {
       "utf8",
     );
     expect(await getActivePid()).toEqual([96455, 96465, 97250]);
+  });
+});
+
+describe("buildStartArgs", () => {
+  it("returns an empty array when no opts are provided", () => {
+    expect(buildStartArgs({})).toEqual([]);
+  });
+
+  it("emits --dry-run only when true", () => {
+    expect(buildStartArgs({ dryRun: true })).toEqual(["--dry-run"]);
+    expect(buildStartArgs({ dryRun: false })).toEqual([]);
+  });
+
+  it("emits --watch only when true", () => {
+    expect(buildStartArgs({ watch: true })).toEqual(["--watch"]);
+    expect(buildStartArgs({ watch: false })).toEqual([]);
+  });
+
+  it("emits --max-items N for a positive integer", () => {
+    expect(buildStartArgs({ maxItems: 3 })).toEqual(["--max-items", "3"]);
+  });
+
+  it("rejects non-integer maxItems", () => {
+    expect(() => buildStartArgs({ maxItems: 1.5 })).toThrow(
+      /positive integer/,
+    );
+    expect(() => buildStartArgs({ maxItems: 0 })).toThrow(/positive integer/);
+    expect(() =>
+      buildStartArgs({ maxItems: "3" as unknown as number }),
+    ).toThrow(/positive integer/);
+  });
+
+  it("emits --repos a,b for a list of valid repos", () => {
+    expect(
+      buildStartArgs({ repos: ["openloop/foo", "therealsiege/myflo"] }),
+    ).toEqual(["--repos", "openloop/foo,therealsiege/myflo"]);
+  });
+
+  it("rejects non-array repos", () => {
+    expect(() =>
+      buildStartArgs({ repos: "openloop/foo" as unknown as string[] }),
+    ).toThrow(/non-empty array/);
+  });
+
+  it("rejects an empty repos array", () => {
+    expect(() => buildStartArgs({ repos: [] })).toThrow(/non-empty array/);
+  });
+
+  it("rejects malformed repo names", () => {
+    expect(() => buildStartArgs({ repos: ["nope"] })).toThrow(/invalid repo/);
+    expect(() => buildStartArgs({ repos: ["a/b;rm -rf"] })).toThrow(
+      /invalid repo/,
+    );
+  });
+
+  it("rejects non-boolean dryRun / watch", () => {
+    expect(() =>
+      buildStartArgs({ dryRun: "yes" as unknown as boolean }),
+    ).toThrow(/dryRun/);
+    expect(() =>
+      buildStartArgs({ watch: 1 as unknown as boolean }),
+    ).toThrow(/watch/);
+  });
+
+  it("combines all flags in a stable order", () => {
+    expect(
+      buildStartArgs({
+        dryRun: true,
+        watch: true,
+        maxItems: 5,
+        repos: ["a/b"],
+      }),
+    ).toEqual([
+      "--dry-run",
+      "--watch",
+      "--max-items",
+      "5",
+      "--repos",
+      "a/b",
+    ]);
+  });
+});
+
+describe("startSiege", () => {
+  beforeEach(() => {
+    // Speed up the polling loop so the timeout test finishes fast.
+    process.env.SIEGE_START_POLL_TIMEOUT_MS = "200";
+    process.env.SIEGE_START_POLL_INTERVAL_MS = "20";
+  });
+
+  function stubChild() {
+    return { unref: vi.fn(), on: vi.fn() } as unknown as ReturnType<
+      typeof spawnMock
+    >;
+  }
+
+  async function makeRun(
+    stamp = "20260603-082130",
+    date = "2026-06-03",
+  ): Promise<string> {
+    const logDir = path.join(siegeHome, "logs", date, stamp);
+    await fsp.mkdir(logDir, { recursive: true });
+    return logDir;
+  }
+
+  it("spawns ~/.siege/bin/start with the expected args and returns run info", async () => {
+    await makeRun();
+    spawnMock.mockImplementationOnce(() => {
+      // simulate the bash script writing pids + creating log dir before exit
+      void fsp.writeFile(
+        path.join(siegeHome, "overnight.pid"),
+        "12345\n12346\n",
+        "utf8",
+      );
+      return stubChild();
+    });
+
+    const result = await startSiege({ dryRun: true, maxItems: 2 });
+
+    expect(result.runStamp).toBe("20260603-082130");
+    expect(
+      result.logDir.endsWith(
+        path.join("logs", "2026-06-03", "20260603-082130"),
+      ),
+    ).toBe(true);
+    expect(result.pids).toEqual([12345, 12346]);
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    const [file, args, opts] = spawnMock.mock.calls[0];
+    expect(file).toBe(path.join(siegeHome, "bin", "start"));
+    expect(args).toEqual(["--dry-run", "--max-items", "2"]);
+    expect(opts).toMatchObject({ detached: true, stdio: "ignore" });
+  });
+
+  it("forwards the --repos argument when provided", async () => {
+    await makeRun();
+    spawnMock.mockImplementationOnce(() => {
+      void fsp.writeFile(
+        path.join(siegeHome, "overnight.pid"),
+        "100\n",
+        "utf8",
+      );
+      return stubChild();
+    });
+
+    await startSiege({ repos: ["openloop/foo", "therealsiege/myflo"] });
+    const [, args] = spawnMock.mock.calls[0];
+    expect(args).toEqual([
+      "--repos",
+      "openloop/foo,therealsiege/myflo",
+    ]);
+  });
+
+  it("throws ConflictError when overnight.pid already lists pids", async () => {
+    await fsp.writeFile(
+      path.join(siegeHome, "overnight.pid"),
+      "9999\n",
+      "utf8",
+    );
+
+    await expect(startSiege({})).rejects.toBeInstanceOf(ConflictError);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("attaches pids to ConflictError", async () => {
+    await fsp.writeFile(
+      path.join(siegeHome, "overnight.pid"),
+      "9999\n10000\n",
+      "utf8",
+    );
+
+    try {
+      await startSiege({});
+      throw new Error("expected ConflictError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ConflictError);
+      expect((err as ConflictError).pids).toEqual([9999, 10000]);
+    }
+  });
+
+  it("rejects when no pids appear before the poll timeout", async () => {
+    spawnMock.mockImplementationOnce(() => stubChild());
+    // never write to overnight.pid -> polling exhausts
+    await expect(startSiege({})).rejects.toThrow(/no pids appeared/);
+  });
+
+  it("rejects when pids appear but no run directory exists", async () => {
+    spawnMock.mockImplementationOnce(() => {
+      void fsp.writeFile(
+        path.join(siegeHome, "overnight.pid"),
+        "777\n",
+        "utf8",
+      );
+      return stubChild();
+    });
+
+    await expect(startSiege({})).rejects.toThrow(/no run directory/);
+  });
+
+  it("validates bad opts before pre-checking the pid file", async () => {
+    // pre-existing pids would otherwise throw ConflictError; bad opts should fail first
+    await fsp.writeFile(
+      path.join(siegeHome, "overnight.pid"),
+      "9999\n",
+      "utf8",
+    );
+    await expect(startSiege({ maxItems: -1 })).rejects.toThrow(
+      /positive integer/,
+    );
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 });

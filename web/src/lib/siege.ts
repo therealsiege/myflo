@@ -1,5 +1,6 @@
 import "server-only";
 
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
@@ -339,4 +340,146 @@ export async function getOvernightStartedAtMs(): Promise<number | null> {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
   }
+}
+
+const REPO_NAME_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const DEFAULT_START_POLL_TIMEOUT_MS = 5_000;
+const DEFAULT_START_POLL_INTERVAL_MS = 100;
+
+function positiveIntFromEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim().length === 0) return fallback;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
+export class ConflictError extends Error {
+  readonly pids: number[];
+  constructor(message: string, pids: number[]) {
+    super(message);
+    this.name = "ConflictError";
+    this.pids = pids;
+  }
+}
+
+export interface StartSiegeOptions {
+  dryRun?: boolean;
+  maxItems?: number;
+  repos?: string[];
+  watch?: boolean;
+}
+
+export interface StartSiegeResult {
+  runStamp: string;
+  logDir: string;
+  pids: number[];
+}
+
+export function buildStartArgs(opts: StartSiegeOptions): string[] {
+  const args: string[] = [];
+
+  if (opts.dryRun !== undefined && typeof opts.dryRun !== "boolean") {
+    throw new Error("dryRun must be a boolean");
+  }
+  if (opts.dryRun === true) args.push("--dry-run");
+
+  if (opts.watch !== undefined && typeof opts.watch !== "boolean") {
+    throw new Error("watch must be a boolean");
+  }
+  if (opts.watch === true) args.push("--watch");
+
+  if (opts.maxItems !== undefined) {
+    if (
+      typeof opts.maxItems !== "number" ||
+      !Number.isInteger(opts.maxItems) ||
+      opts.maxItems < 1
+    ) {
+      throw new Error("maxItems must be a positive integer");
+    }
+    args.push("--max-items", String(opts.maxItems));
+  }
+
+  if (opts.repos !== undefined) {
+    if (!Array.isArray(opts.repos) || opts.repos.length === 0) {
+      throw new Error("repos must be a non-empty array of strings");
+    }
+    for (const r of opts.repos) {
+      if (typeof r !== "string" || !REPO_NAME_RE.test(r)) {
+        throw new Error(
+          `invalid repo: ${JSON.stringify(r)} (expected "owner/name")`,
+        );
+      }
+    }
+    args.push("--repos", opts.repos.join(","));
+  }
+
+  return args;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function pollForPids(
+  timeoutMs: number,
+  intervalMs: number,
+): Promise<number[]> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const found = await getActivePid();
+    if (found && found.length > 0) return found;
+    await sleep(intervalMs);
+  }
+  const final = await getActivePid();
+  return final ?? [];
+}
+
+async function resolveLatestRun(): Promise<RunInfo | null> {
+  const dates = await listRunDates();
+  for (const date of dates) {
+    const runs = await listRuns(date);
+    if (runs.length > 0) return runs[0];
+  }
+  return null;
+}
+
+export async function startSiege(
+  opts: StartSiegeOptions = {},
+): Promise<StartSiegeResult> {
+  const args = buildStartArgs(opts);
+
+  const existing = await getActivePid();
+  if (existing && existing.length > 0) {
+    throw new ConflictError("siege already running", existing);
+  }
+
+  const home = resolveSiegeHome();
+  const startBin = path.join(home, "bin", "start");
+
+  const child = spawn(startBin, args, {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+
+  const timeoutMs = positiveIntFromEnv(
+    "SIEGE_START_POLL_TIMEOUT_MS",
+    DEFAULT_START_POLL_TIMEOUT_MS,
+  );
+  const intervalMs = positiveIntFromEnv(
+    "SIEGE_START_POLL_INTERVAL_MS",
+    DEFAULT_START_POLL_INTERVAL_MS,
+  );
+  const pids = await pollForPids(timeoutMs, intervalMs);
+  if (pids.length === 0) {
+    throw new Error(
+      `siege start: no pids appeared within ${timeoutMs}ms`,
+    );
+  }
+
+  const latest = await resolveLatestRun();
+  if (latest === null) {
+    throw new Error("siege start: no run directory found");
+  }
+  return { runStamp: latest.stamp, logDir: latest.logDir, pids };
 }
