@@ -128,3 +128,100 @@
     @apply font-sans;
   }
 }
+
+@layer components {
+  /* Slate-tuned markdown prose for /reports — calm, technical, journal-like.
+     Scoped to .report-prose to keep it out of the global default. */
+  .report-prose {
+    @apply text-foreground/85;
+    font-size: 0.9rem;
+    line-height: 1.7;
+  }
+  .report-prose > :first-child {
+    @apply mt-0;
+  }
+  .report-prose > :last-child {
+    @apply mb-0;
+  }
+  .report-prose h1 {
+    @apply mt-10 mb-4 text-2xl font-medium tracking-tight text-foreground;
+  }
+  .report-prose h2 {
+    @apply mt-10 mb-3 text-base font-medium tracking-tight text-foreground;
+  }
+  .report-prose h3 {
+    @apply mt-8 mb-2 font-mono text-[0.7rem] uppercase tracking-[0.18em] text-muted-foreground;
+  }
+  .report-prose h4,
+  .report-prose h5,
+  .report-prose h6 {
+    @apply mt-6 mb-2 text-sm font-medium tracking-tight text-foreground;
+  }
+  .report-prose p {
+    @apply my-3;
+  }
+  .report-prose a {
+    @apply text-foreground underline decoration-foreground/30 underline-offset-4 transition-colors;
+  }
+  .report-prose a:hover {
+    @apply decoration-foreground;
+  }
+  .report-prose strong {
+    @apply font-medium text-foreground;
+  }
+  .report-prose em {
+    @apply italic;
+  }
+  .report-prose ul {
+    @apply my-3 list-disc pl-5;
+  }
+  .report-prose ol {
+    @apply my-3 list-decimal pl-5;
+  }
+  .report-prose li {
+    @apply my-1;
+  }
+  .report-prose li > p {
+    @apply my-1;
+  }
+  .report-prose hr {
+    @apply my-8 border-0 border-t border-border;
+  }
+  .report-prose blockquote {
+    @apply my-4 rounded-md bg-muted/60 px-4 py-3 text-muted-foreground;
+  }
+  .report-prose blockquote > p {
+    @apply my-0;
+  }
+  .report-prose code {
+    @apply rounded bg-muted px-1.5 py-0.5 font-mono text-[0.82em] text-foreground;
+  }
+  .report-prose pre {
+    @apply my-4 overflow-x-auto rounded-lg bg-muted p-4 text-[0.78rem] leading-6;
+  }
+  .report-prose pre code {
+    @apply bg-transparent p-0 text-foreground;
+    font-size: inherit;
+  }
+  .report-prose table {
+    @apply my-5 w-full border-collapse text-[0.82rem];
+  }
+  .report-prose thead {
+    @apply border-b border-border;
+  }
+  .report-prose th {
+    @apply px-3 py-2 text-left font-mono text-[0.68rem] font-medium uppercase tracking-[0.14em] text-muted-foreground;
+  }
+  .report-prose tbody tr {
+    @apply border-b border-border/60;
+  }
+  .report-prose tbody tr:last-child {
+    @apply border-b-0;
+  }
+  .report-prose td {
+    @apply px-3 py-2 align-top text-foreground/85;
+  }
+  .report-prose img {
+    @apply my-4 max-w-full rounded-md;
+  }
+}
