@@ -5,12 +5,20 @@ const {
   getOvernightStartedAtMsMock,
   listRunDatesMock,
   listRunsMock,
+  findLatestRunLogPathMock,
+  tailFileMock,
+  parseCurrentItemMock,
+  isCapReachedMock,
   ghAuthStatusMock,
 } = vi.hoisted(() => ({
   getActivePidMock: vi.fn(),
   getOvernightStartedAtMsMock: vi.fn(),
   listRunDatesMock: vi.fn(),
   listRunsMock: vi.fn(),
+  findLatestRunLogPathMock: vi.fn(),
+  tailFileMock: vi.fn(),
+  parseCurrentItemMock: vi.fn(),
+  isCapReachedMock: vi.fn(),
   ghAuthStatusMock: vi.fn(),
 }));
 
@@ -19,6 +27,10 @@ vi.mock("@/lib/siege", () => ({
   getOvernightStartedAtMs: getOvernightStartedAtMsMock,
   listRunDates: listRunDatesMock,
   listRuns: listRunsMock,
+  findLatestRunLogPath: findLatestRunLogPathMock,
+  tailFile: tailFileMock,
+  parseCurrentItem: parseCurrentItemMock,
+  isCapReached: isCapReachedMock,
 }));
 
 vi.mock("@/lib/gh", () => ({
@@ -32,6 +44,8 @@ interface StatusBody {
   pids: number[];
   elapsedSec: number | null;
   latestRun: { date: string; stamp: string; logDir: string } | null;
+  currentItem: { issue: number; title: string } | null;
+  capReached: boolean;
   ghAuth: { authenticated: boolean; user?: string };
 }
 
@@ -42,7 +56,15 @@ beforeEach(() => {
   getOvernightStartedAtMsMock.mockReset();
   listRunDatesMock.mockReset();
   listRunsMock.mockReset();
+  findLatestRunLogPathMock.mockReset();
+  tailFileMock.mockReset();
+  parseCurrentItemMock.mockReset();
+  isCapReachedMock.mockReset();
   ghAuthStatusMock.mockReset();
+  // safe defaults so tests that don't care about log insight just get nulls
+  findLatestRunLogPathMock.mockResolvedValue(null);
+  parseCurrentItemMock.mockReturnValue(null);
+  isCapReachedMock.mockReturnValue(false);
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
 });
@@ -66,6 +88,8 @@ describe("GET /api/siege/status", () => {
       pids: [],
       elapsedSec: null,
       latestRun: null,
+      currentItem: null,
+      capReached: false,
       ghAuth: { authenticated: false },
     });
   });
@@ -165,5 +189,78 @@ describe("GET /api/siege/status", () => {
     const res = await GET();
     expect(res.status).toBe(500);
     expect(((await res.json()) as { error: string }).error).toMatch(/boom/);
+  });
+
+  it("attaches currentItem when running and a log open ▶ is present", async () => {
+    getActivePidMock.mockResolvedValue([42]);
+    getOvernightStartedAtMsMock.mockResolvedValue(NOW - 30_000);
+    listRunDatesMock.mockResolvedValue([]);
+    ghAuthStatusMock.mockResolvedValue({ authenticated: false });
+    findLatestRunLogPathMock.mockResolvedValue("/h/x.log");
+    tailFileMock.mockResolvedValue({
+      path: "/h/x.log",
+      lines: ["▶ #4: API routes"],
+      size: 0,
+      updatedAt: "2026-06-02T22:00:00.000Z",
+    });
+    parseCurrentItemMock.mockReturnValue({ issue: 4, title: "API routes" });
+    isCapReachedMock.mockReturnValue(false);
+
+    const body = (await (await GET()).json()) as StatusBody;
+    expect(body.currentItem).toEqual({ issue: 4, title: "API routes" });
+    expect(body.capReached).toBe(false);
+  });
+
+  it("clears currentItem when not running", async () => {
+    getActivePidMock.mockResolvedValue(null);
+    getOvernightStartedAtMsMock.mockResolvedValue(null);
+    listRunDatesMock.mockResolvedValue([]);
+    ghAuthStatusMock.mockResolvedValue({ authenticated: false });
+    findLatestRunLogPathMock.mockResolvedValue("/h/x.log");
+    tailFileMock.mockResolvedValue({
+      path: "/h/x.log",
+      lines: ["▶ #4: still in log"],
+      size: 0,
+      updatedAt: "2026-06-02T22:00:00.000Z",
+    });
+    parseCurrentItemMock.mockReturnValue({ issue: 4, title: "still in log" });
+    isCapReachedMock.mockReturnValue(false);
+
+    const body = (await (await GET()).json()) as StatusBody;
+    expect(body.currentItem).toBeNull();
+  });
+
+  it("surfaces capReached even when not running", async () => {
+    getActivePidMock.mockResolvedValue(null);
+    getOvernightStartedAtMsMock.mockResolvedValue(null);
+    listRunDatesMock.mockResolvedValue([]);
+    ghAuthStatusMock.mockResolvedValue({ authenticated: false });
+    findLatestRunLogPathMock.mockResolvedValue("/h/x.log");
+    tailFileMock.mockResolvedValue({
+      path: "/h/x.log",
+      lines: ["wall-clock cap reached (8h) — terminating siege"],
+      size: 0,
+      updatedAt: "2026-06-02T22:00:00.000Z",
+    });
+    parseCurrentItemMock.mockReturnValue(null);
+    isCapReachedMock.mockReturnValue(true);
+
+    const body = (await (await GET()).json()) as StatusBody;
+    expect(body.capReached).toBe(true);
+  });
+
+  it("degrades log insight to nulls when tailFile throws", async () => {
+    getActivePidMock.mockResolvedValue([42]);
+    getOvernightStartedAtMsMock.mockResolvedValue(NOW - 30_000);
+    listRunDatesMock.mockResolvedValue([]);
+    ghAuthStatusMock.mockResolvedValue({ authenticated: false });
+    findLatestRunLogPathMock.mockResolvedValue("/h/x.log");
+    tailFileMock.mockRejectedValue(new Error("disk gone"));
+
+    const res = await GET();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as StatusBody;
+    expect(body.currentItem).toBeNull();
+    expect(body.capReached).toBe(false);
   });
 });
