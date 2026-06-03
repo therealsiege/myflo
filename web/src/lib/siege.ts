@@ -283,6 +283,70 @@ function parseItemResult(raw: string): ItemResult | null {
   };
 }
 
+export interface LastAttempt {
+  date: string;
+  stamp: string;
+  status: string;
+}
+
+const REPO_SAFE_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+export function toRepoSafe(repo: string): string {
+  if (typeof repo !== "string" || !REPO_SAFE_RE.test(repo)) {
+    throw new Error(
+      `invalid repo: ${JSON.stringify(repo)} (expected "owner/name")`,
+    );
+  }
+  return repo.replace("/", "_");
+}
+
+export async function getLastAttempt(
+  repo: string,
+  issueNumber: number,
+): Promise<LastAttempt | null> {
+  if (
+    typeof issueNumber !== "number" ||
+    !Number.isInteger(issueNumber) ||
+    issueNumber < 1
+  ) {
+    throw new Error("issueNumber must be a positive integer");
+  }
+  const repoSafe = toRepoSafe(repo);
+  const home = resolveSiegeHome();
+  const logsRoot = await resolveSafePath(path.join(home, "logs"), home);
+  const dates = await readDirIfPresent(logsRoot);
+  const sortedDates = dates
+    .filter((name) => RUN_DATE_RE.test(name))
+    .sort()
+    .reverse();
+
+  const resultFile = `issue-${issueNumber}.result.json`;
+
+  for (const date of sortedDates) {
+    const dateDir = await resolveSafePath(
+      path.join(logsRoot, date),
+      home,
+    );
+    const stamps = (await readDirIfPresent(dateDir))
+      .filter((name) => RUN_STAMP_RE.test(name))
+      .sort()
+      .reverse();
+
+    for (const stamp of stamps) {
+      const candidate = await resolveSafePath(
+        path.join(dateDir, stamp, "items", repoSafe, resultFile),
+        home,
+      );
+      const raw = await readTextIfPresent(candidate);
+      if (raw === null) continue;
+      const parsed = parseItemResult(raw);
+      if (!parsed) continue;
+      return { date, stamp, status: parsed.status };
+    }
+  }
+  return null;
+}
+
 export async function readDesktopReports(): Promise<DesktopReport[]> {
   const desktop = resolveDesktop();
   const entries = await readDirIfPresent(desktop);

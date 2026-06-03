@@ -24,6 +24,7 @@ import {
   buildStartArgs,
   ConflictError,
   getActivePid,
+  getLastAttempt,
   killSiege,
   listRunDates,
   listRuns,
@@ -34,6 +35,7 @@ import {
   readRunItemResults,
   readSkills,
   startSiege,
+  toRepoSafe,
   writeRepos,
   type ReposConfig,
 } from "./siege";
@@ -212,6 +214,158 @@ describe("listRunDates / listRuns / readRunItemResults", () => {
     await expect(
       readRunItemResults(path.join(siegeHome, "..")),
     ).rejects.toThrow(/escape/);
+  });
+});
+
+describe("toRepoSafe", () => {
+  it("replaces the first slash with an underscore", () => {
+    expect(toRepoSafe("therealsiege/myflo")).toBe("therealsiege_myflo");
+    expect(toRepoSafe("a-b.c/d_e")).toBe("a-b.c_d_e");
+  });
+
+  it("rejects malformed repo names", () => {
+    expect(() => toRepoSafe("nope")).toThrow(/invalid repo/);
+    expect(() => toRepoSafe("a/b/c")).toThrow(/invalid repo/);
+    expect(() => toRepoSafe("a/b;rm")).toThrow(/invalid repo/);
+  });
+});
+
+describe("getLastAttempt", () => {
+  async function writeResult(
+    date: string,
+    stamp: string,
+    repoSafe: string,
+    issueNum: number,
+    body: Record<string, unknown>,
+  ) {
+    const dir = path.join(
+      siegeHome,
+      "logs",
+      date,
+      stamp,
+      "items",
+      repoSafe,
+    );
+    await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(
+      path.join(dir, `issue-${issueNum}.result.json`),
+      JSON.stringify(body),
+      "utf8",
+    );
+  }
+
+  it("returns null when there are no logs", async () => {
+    expect(await getLastAttempt("therealsiege/myflo", 12)).toBeNull();
+  });
+
+  it("returns null when no matching result.json exists", async () => {
+    await writeResult(
+      "2026-06-02",
+      "20260602-120000",
+      "therealsiege_myflo",
+      99,
+      { status: "done" },
+    );
+    expect(await getLastAttempt("therealsiege/myflo", 12)).toBeNull();
+  });
+
+  it("returns the most recent matching result (newest date wins)", async () => {
+    await writeResult(
+      "2026-06-01",
+      "20260601-120000",
+      "therealsiege_myflo",
+      12,
+      { status: "failed", ts: "2026-06-01T12:00:00Z" },
+    );
+    await writeResult(
+      "2026-06-02",
+      "20260602-180000",
+      "therealsiege_myflo",
+      12,
+      { status: "merged", ts: "2026-06-02T18:00:00Z" },
+    );
+    const result = await getLastAttempt("therealsiege/myflo", 12);
+    expect(result).toEqual({
+      date: "2026-06-02",
+      stamp: "20260602-180000",
+      status: "merged",
+    });
+  });
+
+  it("returns the most recent stamp within the newest date", async () => {
+    await writeResult(
+      "2026-06-02",
+      "20260602-120000",
+      "therealsiege_myflo",
+      12,
+      { status: "failed" },
+    );
+    await writeResult(
+      "2026-06-02",
+      "20260602-180000",
+      "therealsiege_myflo",
+      12,
+      { status: "done" },
+    );
+    const result = await getLastAttempt("therealsiege/myflo", 12);
+    expect(result).toEqual({
+      date: "2026-06-02",
+      stamp: "20260602-180000",
+      status: "done",
+    });
+  });
+
+  it("ignores other repos and other issues", async () => {
+    await writeResult(
+      "2026-06-02",
+      "20260602-180000",
+      "another_repo",
+      12,
+      { status: "merged" },
+    );
+    await writeResult(
+      "2026-06-02",
+      "20260602-180000",
+      "therealsiege_myflo",
+      99,
+      { status: "merged" },
+    );
+    expect(await getLastAttempt("therealsiege/myflo", 12)).toBeNull();
+  });
+
+  it("skips malformed date and stamp directories", async () => {
+    const badDate = path.join(siegeHome, "logs", "not-a-date");
+    await fsp.mkdir(badDate, { recursive: true });
+    const badStamp = path.join(siegeHome, "logs", "2026-06-02", "junk");
+    await fsp.mkdir(badStamp, { recursive: true });
+    await writeResult(
+      "2026-06-02",
+      "20260602-180000",
+      "therealsiege_myflo",
+      12,
+      { status: "done" },
+    );
+    const result = await getLastAttempt("therealsiege/myflo", 12);
+    expect(result?.stamp).toBe("20260602-180000");
+  });
+
+  it("rejects malformed repo names", async () => {
+    await expect(getLastAttempt("nope", 1)).rejects.toThrow(/invalid repo/);
+    await expect(getLastAttempt("a/b;rm -rf", 1)).rejects.toThrow(
+      /invalid repo/,
+    );
+  });
+
+  it("rejects non-positive issue numbers", async () => {
+    await expect(getLastAttempt("foo/bar", 0)).rejects.toThrow(
+      /positive integer/,
+    );
+    await expect(getLastAttempt("foo/bar", -1)).rejects.toThrow(
+      /positive integer/,
+    );
+    await expect(getLastAttempt("foo/bar", 1.5)).rejects.toThrow(
+      /positive integer/,
+    );
   });
 });
 
