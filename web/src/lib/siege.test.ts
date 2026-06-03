@@ -3,8 +3,9 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-const { spawnMock } = vi.hoisted(() => ({
+const { spawnMock, execFileMock } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
+  execFileMock: vi.fn(),
 }));
 
 vi.mock("node:child_process", async () => {
@@ -15,6 +16,7 @@ vi.mock("node:child_process", async () => {
   return {
     ...actual,
     spawn: spawnMock,
+    execFile: execFileMock,
   };
 });
 
@@ -22,6 +24,7 @@ import {
   buildStartArgs,
   ConflictError,
   getActivePid,
+  killSiege,
   listRunDates,
   listRuns,
   readConfig,
@@ -82,6 +85,7 @@ beforeEach(async () => {
   process.env.HOME = fakeHome;
 
   spawnMock.mockReset();
+  execFileMock.mockReset();
 });
 
 afterEach(async () => {
@@ -476,5 +480,102 @@ describe("startSiege", () => {
       /positive integer/,
     );
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("killSiege", () => {
+  function mockKillStdout(stdout: string) {
+    execFileMock.mockImplementationOnce(
+      (
+        _file: string,
+        _args: readonly string[],
+        _opts: unknown,
+        cb: (
+          err: NodeJS.ErrnoException | null,
+          stdout: string,
+          stderr: string,
+        ) => void,
+      ) => {
+        cb(null, stdout, "");
+      },
+    );
+  }
+
+  it("runs ~/.siege/bin/kill with no args by default and returns parsed pids", async () => {
+    mockKillStdout(
+      "killing 2 siege process(es): 12345 12346\nsiege stopped.\n",
+    );
+
+    const result = await killSiege();
+
+    expect(result).toEqual({ killed: [12345, 12346], method: "graceful" });
+    expect(execFileMock).toHaveBeenCalledTimes(1);
+    const [file, args, opts] = execFileMock.mock.calls[0];
+    expect(file).toBe(path.join(siegeHome, "bin", "kill"));
+    expect(args).toEqual([]);
+    expect(opts).toMatchObject({ timeout: 35_000 });
+  });
+
+  it("passes --force when requested and reports method 'force'", async () => {
+    mockKillStdout("killing 1 siege process(es): 999\nsiege stopped.\n");
+
+    const result = await killSiege(true);
+
+    expect(result).toEqual({ killed: [999], method: "force" });
+    const [, args] = execFileMock.mock.calls[0];
+    expect(args).toEqual(["--force"]);
+  });
+
+  it("returns noop when the script reports no pid file", async () => {
+    mockKillStdout("no siege running (no pid file).\n");
+
+    const result = await killSiege();
+
+    expect(result).toEqual({ killed: [], method: "noop" });
+  });
+
+  it("returns noop when the script reports no alive processes", async () => {
+    mockKillStdout("no siege processes alive. cleaning up pid file.\n");
+
+    const result = await killSiege();
+
+    expect(result).toEqual({ killed: [], method: "noop" });
+  });
+
+  it("returns noop on empty stdout", async () => {
+    mockKillStdout("");
+
+    const result = await killSiege();
+
+    expect(result).toEqual({ killed: [], method: "noop" });
+  });
+
+  it("propagates execFile errors", async () => {
+    execFileMock.mockImplementationOnce(
+      (
+        _file: string,
+        _args: readonly string[],
+        _opts: unknown,
+        cb: (
+          err: NodeJS.ErrnoException | null,
+          stdout: string,
+          stderr: string,
+        ) => void,
+      ) => {
+        cb(new Error("ENOENT: kill script missing"), "", "");
+      },
+    );
+
+    await expect(killSiege()).rejects.toThrow(/kill script missing/);
+  });
+
+  it("ignores junk tokens on the killing line", async () => {
+    mockKillStdout(
+      "killing 3 siege process(es): 100 not-a-pid 200 0 300\nsiege stopped.\n",
+    );
+
+    const result = await killSiege();
+
+    expect(result).toEqual({ killed: [100, 200, 300], method: "graceful" });
   });
 });

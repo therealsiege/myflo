@@ -1,6 +1,6 @@
 import "server-only";
 
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
@@ -482,4 +482,59 @@ export async function startSiege(
     throw new Error("siege start: no run directory found");
   }
   return { runStamp: latest.stamp, logDir: latest.logDir, pids };
+}
+
+const KILL_TIMEOUT_MS = 35_000;
+const KILL_PIDS_LINE_RE =
+  /killing\s+\d+\s+siege\s+process\(es\):\s*(.+)/i;
+
+export type KillSiegeMethod = "graceful" | "force" | "noop";
+
+export interface KillSiegeResult {
+  killed: number[];
+  method: KillSiegeMethod;
+}
+
+function parseKilledPids(stdout: string): number[] {
+  const m = KILL_PIDS_LINE_RE.exec(stdout);
+  if (!m) return [];
+  const pids: number[] = [];
+  for (const token of m[1].trim().split(/\s+/)) {
+    const n = Number(token);
+    if (Number.isInteger(n) && n > 0) pids.push(n);
+  }
+  return pids;
+}
+
+function runKillScript(
+  bin: string,
+  args: string[],
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      bin,
+      args,
+      { timeout: KILL_TIMEOUT_MS, encoding: "utf8" },
+      (err, stdout, stderr) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve({ stdout, stderr });
+      },
+    );
+  });
+}
+
+export async function killSiege(force = false): Promise<KillSiegeResult> {
+  const home = resolveSiegeHome();
+  const killBin = path.join(home, "bin", "kill");
+  const args = force ? ["--force"] : [];
+
+  const { stdout } = await runKillScript(killBin, args);
+  const killed = parseKilledPids(stdout);
+  if (killed.length === 0) {
+    return { killed: [], method: "noop" };
+  }
+  return { killed, method: force ? "force" : "graceful" };
 }
