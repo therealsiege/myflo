@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { usePathname } from "next/navigation"
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 import { Menu, X } from "lucide-react"
@@ -8,19 +8,47 @@ import { Menu, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { AppSidebar, getActiveNavLabel } from "@/components/app-sidebar"
+import {
+  SiegeStatusPill,
+  type SiegeStatusMode,
+} from "@/app/control/status-pill"
+import type { SiegeStatusBody } from "@/app/control/types"
 
 const SIDEBAR_WIDTH = "w-[220px]"
+const STATUS_POLL_MS = 5_000
 
 function StatusPill() {
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background/60 px-2.5 py-1 font-mono text-[0.7rem] uppercase tracking-[0.12em] text-muted-foreground">
-      <span
-        aria-hidden
-        className="size-1.5 rounded-full bg-muted-foreground/50"
-      />
-      siege: idle
-    </span>
-  )
+  const [mode, setMode] = useState<SiegeStatusMode>("idle")
+  const [elapsedSec, setElapsedSec] = useState<number | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    const tick = async () => {
+      try {
+        const res = await fetch("/api/siege/status", { cache: "no-store" })
+        if (!res.ok) throw new Error(`status ${res.status}`)
+        const body = (await res.json()) as SiegeStatusBody
+        if (cancelled) return
+        if (body.running) setMode("running")
+        else if (body.capReached) setMode("cap-reached")
+        else setMode("idle")
+        setElapsedSec(body.elapsedSec)
+      } catch {
+        if (cancelled) return
+        setMode("error")
+        setElapsedSec(null)
+      }
+    }
+    void tick()
+    const id = setInterval(tick, STATUS_POLL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [])
+
+  return <SiegeStatusPill mode={mode} elapsedSec={elapsedSec} />
 }
 
 function TopBar({
