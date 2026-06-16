@@ -1,0 +1,22 @@
+{
+  "name": "@myflo/cli",
+  "version": "0.1.0",
+  "description": "flo — local-first developer workbench. Standalone CLI for myflo.",
+  "type": "module",
+  "bin": {
+    "flo": "./bin/flo.js"
+  },
+  "files": [
+    "bin/**",
+    "lib/**",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "tag": "latest"
+  }
+}

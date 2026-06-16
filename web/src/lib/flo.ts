@@ -1,0 +1,65 @@
+import "server-only";
+
+import { execFile } from "node:child_process";
+import * as path from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+
+const REPO_ROOT = path.resolve(process.cwd(), "..");
+const FLO_BIN = path.join(REPO_ROOT, "apps", "cli", "bin", "flo.js");
+
+export interface FloCheckpoint {
+  id: string;
+  path: string;
+  mtime: number;
+  tag?: string;
+  timestamp?: string;
+  type?: string;
+  file?: string;
+  branch?: string;
+}
+
+export interface FloAuditResult {
+  total: number;
+  scopeHistogram: Record<string, number>;
+  kindHistogram: Record<string, number>;
+  duplicates: Array<{
+    key: string;
+    name: string;
+    kind: string;
+    count: number;
+    occurrences: Array<{ scope: string; path: string; description: string }>;
+  }>;
+  missingDescription: Array<{ scope: string; kind: string; name: string; path: string }>;
+}
+
+async function runFlo(args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync(process.execPath, [FLO_BIN, ...args], {
+    cwd: REPO_ROOT,
+    maxBuffer: 16 * 1024 * 1024,
+    timeout: 30_000,
+  });
+  return stdout;
+}
+
+export async function listSessions(opts: { limit?: number } = {}): Promise<FloCheckpoint[]> {
+  const args = ["sessions", "list", "--json"];
+  if (opts.limit) args.push("--limit", String(opts.limit));
+  const stdout = await runFlo(args);
+  return JSON.parse(stdout);
+}
+
+export async function runGuidanceAudit(opts: { scope?: "all" | "user" | "project" } = {}): Promise<FloAuditResult> {
+  const args = ["guidance", "audit", "--json", "--quiet"];
+  if (opts.scope) args.push("--scope", opts.scope);
+  const stdout = await runFlo(args);
+  const parsed = JSON.parse(stdout);
+  return {
+    total: parsed.total,
+    scopeHistogram: parsed.scopeHistogram,
+    kindHistogram: parsed.kindHistogram,
+    duplicates: parsed.duplicates,
+    missingDescription: parsed.missingDescription,
+  };
+}
