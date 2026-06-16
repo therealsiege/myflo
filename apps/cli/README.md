@@ -22,8 +22,10 @@ flo --help
 | `flo guidance audit [--scope all\|user\|project] [--json] [--out file]` | Scan `~/.claude/{skills,commands,agents}/` and project `.claude/` for duplicate, undescribed, or orphan capabilities. Markdown report by default, JSON with `--json`. |
 | `flo migrate [--dry-run] [--mcp-path PATH]` | Register `flo` as an MCP server in `~/.claude/mcp.json`. Idempotent. Backs up the existing file before writing. |
 | `flo sessions list [--limit N] [--json]` | List Claude Code session checkpoints from `.claude/checkpoints/` in the current project. |
-| `flo inbox watch <dir> [--once]` | Foreground folder watcher. `.md` drops parse frontmatter (`to:`/`from:`/`subject:`). Audio (`.m4a` `.wav` `.mp3`) routes to a transcribe handler stub. Processed files move to `<dir>/.processed/`. Activity logged to `<dir>/inbox.log`. |
+| `flo inbox watch <dir> [--once]` | Foreground folder watcher. `.md` drops parse frontmatter (`to:`/`from:`/`subject:`). Audio (`.m4a` `.wav` `.mp3`) is transcribed locally via whisper/mlx-whisper and a sidecar `.txt` is written next to the audio file. Processed files move to `<dir>/.processed/`. Activity logged to `<dir>/inbox.log`. |
 | `flo inbox status [--dir <dir>]` | Show pending/processed/failed counts and the last few log entries. |
+| `flo transcribe <file> [--save] [--model base\|small\|medium\|large]` | Local audio transcription (whisper / mlx-whisper / whisper-cpp — detected at runtime, no cloud). `--save` writes sidecar `.txt`. `--detect` reports which tool would be used. |
+| `flo swarm status [--json]` | Read `.swarm/state.json` + `.swarm/q-learning-model.json` and render objective/agents/q-learning stats. |
 | `flo doctor [--json]` | Quick health check: Node version, git, `.claude/`, checkpoints, MCP config, flo binary. |
 | `flo mcp start` | Run as a stdio MCP server. Exposes two tools: `flo_sessions_list` and `flo_guidance_audit`. |
 | `flo help` / `flo version` | Self-explanatory. |
@@ -41,6 +43,7 @@ The repo's own `.claude/settings.json` already registers `flo` alongside the exi
 
 The local command center at `web/` (Next.js 16, Tailwind v4, shadcn) exposes two flo panels:
 
+- `/swarm` — `.swarm/state.json` + q-learning model summary
 - `/sessions` — table view of `.claude/checkpoints/`
 - `/capabilities` — capability audit summary with duplicate ranking
 
@@ -63,8 +66,16 @@ Exercises every command end-to-end against an ephemeral temp directory.
 ## Roadmap
 
 - `inbox` launchd installer (port of `watchthis` — macOS-only).
-- `transcribe` handler that wraps `mlx-whisper` (port of `whispertty`).
 - `eagent` inbox-bridge that routes markdown drops to in-process Claude Code agents via `SendMessage`.
 - `flo session terminal-attach` for Ghostty/iTerm window restore (port of `a-team`).
-- Web `/swarm`, `/memory`, `/inbox`, `/plugins`, `/hooks` panels.
-- Full v3/@claude-flow/* → packages/@myflo/* fork (currently `@myflo/shared` is a PoC; the other 24 packages still live under `v3/`).
+- Web `/memory`, `/inbox`, `/plugins`, `/hooks` panels.
+- Full v3/@claude-flow/* → packages/@myflo/* fork (currently `@myflo/{shared,memory,hooks}` are forked; the other ~22 packages still live under `v3/`).
+
+## Status
+
+- ✅ CLI: 9 commands working, 12/12 smoke tests passing.
+- ✅ MCP server: stdio JSON-RPC, 2 tools registered (`flo_sessions_list`, `flo_guidance_audit`).
+- ✅ Web: 3 flo panels (`/swarm`, `/sessions`, `/capabilities`) alongside existing siege panels.
+- ✅ Audio: real local transcription (auto-detects whisper / mlx-whisper / whisper-cpp).
+- 🟡 v3 fork: 3 of ~25 packages copied with renamed manifests; rest still under `v3/@claude-flow/`.
+- 🟡 watchthis launchd ingress: deferred — inbox watcher is foreground only.

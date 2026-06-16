@@ -78,6 +78,28 @@ else
   FAIL=$((FAIL+1))
 fi
 
+# Transcribe: detect should always run; we don't assert which tool, only that the command exits cleanly with --json
+if $FLO transcribe --detect --json >/dev/null 2>&1; then
+  echo "  PASS  transcribe --detect"
+  PASS=$((PASS+1))
+else
+  echo "  SKIP  transcribe --detect (no tool installed — install whisper/mlx-whisper to enable)"
+  # Not counted as a failure: transcribe is local-tool-dependent.
+fi
+
+# Swarm: if .swarm/ exists, expect available=true; otherwise expect available=false
+if [ -d "${REPO_ROOT}/.swarm" ]; then
+  if $FLO swarm status --json | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("available") is True' 2>/dev/null; then
+    echo "  PASS  swarm status (available)"
+    PASS=$((PASS+1))
+  else
+    echo "  FAIL  swarm status with .swarm/ present"
+    FAIL=$((FAIL+1))
+  fi
+else
+  echo "  SKIP  swarm status (no .swarm/ dir)"
+fi
+
 echo "--------------"
 echo "$PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then exit 1; fi

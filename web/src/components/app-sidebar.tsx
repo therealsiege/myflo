@@ -8,6 +8,7 @@ import {
   FolderGit2,
   History,
   Inbox,
+  Network,
   Settings,
   Sparkles,
   type LucideIcon,
@@ -35,6 +36,7 @@ const secondaryNav: NavItem[] = [
 ]
 
 const floNav: NavItem[] = [
+  { href: "/swarm", label: "Swarm", icon: Network },
   { href: "/sessions", label: "Sessions", icon: History },
   { href: "/capabilities", label: "Capabilities", icon: Sparkles },
 ]

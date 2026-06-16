@@ -19,9 +19,13 @@ Commands:
   sessions list               List Claude Code session checkpoints in
                               .claude/checkpoints/ for the current project.
   inbox watch <dir>           Watch a folder for drops. Markdown frontmatter routes
-                              to memory/SendMessage; .m4a/.wav/.mp3 routes to
-                              transcribe handler. (Foreground mode; no launchd yet.)
+                              to memory/SendMessage; .m4a/.wav/.mp3 transcribed
+                              locally (whisper/mlx-whisper). Sidecar .txt written
+                              next to each audio file. (Foreground; no launchd yet.)
   inbox status                Show registered inbox handlers and recent activity.
+  transcribe <file>           Local audio transcription via whisper/mlx-whisper.
+                              Use --save for a sidecar .txt; --detect to check
+                              which tool is available.
   doctor                      Quick health check: Node, git, .claude dir,
                               checkpoints, MCP config.
   help, -h, --help            Show this help.

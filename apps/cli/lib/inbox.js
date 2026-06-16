@@ -3,6 +3,7 @@ import { readdir, readFile, stat, rename, mkdir, appendFile } from 'node:fs/prom
 import { existsSync } from 'node:fs';
 import { join, basename, extname, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { transcribeAndSaveSidecar } from './transcribe.js';
 
 const SETTLE_MS = 2000;
 const HANDLED_DIR = '.processed';
@@ -135,7 +136,14 @@ async function handle(dir, filename) {
       const fm = parseFrontmatter(raw);
       action = `md to=${fm.to || '?'} from=${fm.from || '?'} subject=${fm.subject || '?'}`;
     } else if (AUDIO_EXTS.has(ext)) {
-      action = `audio transcribe(stub) file=${basename(path)} size=${(await stat(path)).size}`;
+      const size = (await stat(path)).size;
+      process.stderr.write(`flo inbox: transcribing ${basename(path)} (${size}b)…\n`);
+      const result = await transcribeAndSaveSidecar(path);
+      if (result.text) {
+        action = `audio transcribed tool=${result.tool} chars=${result.text.length} sidecar=${basename(result.sidecar)}`;
+      } else {
+        action = `audio transcribe-failed tool=${result.tool || 'none'} error=${result.error}`;
+      }
     } else {
       action = `unhandled ext=${ext} file=${basename(path)}`;
     }

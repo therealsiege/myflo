@@ -63,3 +63,45 @@ export async function runGuidanceAudit(opts: { scope?: "all" | "user" | "project
     missingDescription: parsed.missingDescription,
   };
 }
+
+export interface FloSwarmStatus {
+  available: boolean;
+  dir: string;
+  state: {
+    swarmId?: string;
+    objective?: string;
+    strategy?: string;
+    status?: string;
+    agents?: number;
+    parallel?: boolean;
+    startedAt?: string;
+    stoppedAt?: string;
+    agentPlan?: Array<{
+      role: string;
+      type: string;
+      count: number;
+      purpose: string;
+    }>;
+  } | null;
+  qlearn: {
+    stateCount: number;
+    stats?: {
+      stepCount?: number;
+      updateCount?: number;
+      avgTDError?: number;
+      epsilon?: number;
+    };
+    config?: {
+      learningRate?: number;
+      gamma?: number;
+      numActions?: number;
+    };
+    metadata?: { savedAt?: string };
+    sampleStates?: Array<{ state: string; visits: number; topQ: number }>;
+  } | null;
+}
+
+export async function getSwarmStatus(): Promise<FloSwarmStatus> {
+  const stdout = await runFlo(["swarm", "status", "--json"]);
+  return JSON.parse(stdout);
+}
