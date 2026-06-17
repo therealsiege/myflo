@@ -1,0 +1,8 @@
+packages:
+  - "packages/@myflo/*"
+  - "apps/*"
+  - "plugins/*"
+
+ignoredBuiltDependencies:
+  - sharp
+  - unrs-resolver

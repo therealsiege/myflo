@@ -6,8 +6,11 @@ import {
   Activity,
   FileText,
   FolderGit2,
+  History,
   Inbox,
+  Network,
   Settings,
+  Sparkles,
   type LucideIcon,
 } from "lucide-react"
 
@@ -32,7 +35,13 @@ const secondaryNav: NavItem[] = [
   { href: "/config", label: "Config", icon: Settings },
 ]
 
-export const NAV_ITEMS: NavItem[] = [...primaryNav, ...secondaryNav]
+const floNav: NavItem[] = [
+  { href: "/swarm", label: "Swarm", icon: Network },
+  { href: "/sessions", label: "Sessions", icon: History },
+  { href: "/capabilities", label: "Capabilities", icon: Sparkles },
+]
+
+export const NAV_ITEMS: NavItem[] = [...primaryNav, ...secondaryNav, ...floNav]
 
 function isActive(pathname: string, href: string) {
   if (href === "/") return pathname === "/"
@@ -124,6 +133,19 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
             pathname={pathname}
             onNavigate={onNavigate}
           />
+
+          <Separator />
+
+          <div className="flex flex-col gap-2">
+            <p className="px-2.5 font-mono text-[0.6rem] uppercase tracking-[0.22em] text-muted-foreground/70">
+              flo
+            </p>
+            <NavSection
+              items={floNav}
+              pathname={pathname}
+              onNavigate={onNavigate}
+            />
+          </div>
         </nav>
       </ScrollArea>
 
