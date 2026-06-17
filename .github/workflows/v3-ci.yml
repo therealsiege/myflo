@@ -2322,7 +2322,14 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm -r build
       - name: Run trajectory graph edges smoke
+        # Bumped heap: TEST 2 calls hooks_post-task which lazy-loads
+        # SONA/ReasoningBank + tries to init Transformers.js. Sharp's native
+        # binary fails to install for linux-x64 in CI, falls back to mock
+        # embeddings, and that fallback path allocates ~4GB at peak — over
+        # Node 22's default heap ceiling. 6144 MB clears it with headroom.
         run: node scripts/smoke-trajectory-graph-edges.mjs
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
 
   graph-plugin-adapter-smoke:
     # ADR-130 Phase 4 — plugin adapter contract (GraphEdgesSource)
