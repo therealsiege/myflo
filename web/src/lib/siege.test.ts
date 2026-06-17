@@ -23,13 +23,16 @@ vi.mock("node:child_process", async () => {
 import {
   buildStartArgs,
   ConflictError,
+  findLatestRunLogPath,
   getActivePid,
   getLastAttempt,
   getRunDetail,
+  isCapReached,
   killSiege,
   listRecentRuns,
   listRunDates,
   listRuns,
+  parseCurrentItem,
   readConfig,
   readDesktopReport,
   readDesktopReports,
@@ -38,6 +41,7 @@ import {
   readSkills,
   RunNotFoundError,
   startSiege,
+  tailFile,
   toRepoSafe,
   writeRepos,
   type ReposConfig,
@@ -1033,5 +1037,226 @@ describe("getRunDetail", () => {
     );
     const detail = await getRunDetail("20260602-180000");
     expect(detail.items).toEqual([]);
+  });
+});
+
+describe("tailFile", () => {
+  async function writeLog(rel: string, body: string): Promise<string> {
+    const full = path.join(siegeHome, "logs", rel);
+    await fsp.mkdir(path.dirname(full), { recursive: true });
+    await fsp.writeFile(full, body, "utf8");
+    return full;
+  }
+
+  it("returns empty lines for an empty file", async () => {
+    const file = await writeLog("2026-06-02/20260602-120000/empty.log", "");
+    const out = await tailFile(file, 10);
+    expect(out.lines).toEqual([]);
+    expect(out.size).toBe(0);
+    expect(out.path).toBe(await fsp.realpath(file));
+    expect(typeof out.updatedAt).toBe("string");
+  });
+
+  it("returns the last N lines when file has more than N", async () => {
+    const lines = Array.from({ length: 300 }, (_, i) => `line ${i + 1}`);
+    const file = await writeLog(
+      "2026-06-02/20260602-120000/big.log",
+      lines.join("\n") + "\n",
+    );
+    const out = await tailFile(file, 200);
+    expect(out.lines).toHaveLength(200);
+    expect(out.lines[0]).toBe("line 101");
+    expect(out.lines[199]).toBe("line 300");
+  });
+
+  it("returns all lines when file has fewer than N", async () => {
+    const file = await writeLog(
+      "2026-06-02/20260602-120000/small.log",
+      "a\nb\nc\n",
+    );
+    const out = await tailFile(file, 200);
+    expect(out.lines).toEqual(["a", "b", "c"]);
+  });
+
+  it("handles file without trailing newline", async () => {
+    const file = await writeLog(
+      "2026-06-02/20260602-120000/no-newline.log",
+      "first\nsecond\nthird",
+    );
+    const out = await tailFile(file, 10);
+    expect(out.lines).toEqual(["first", "second", "third"]);
+  });
+
+  it("rejects non-positive maxLines", async () => {
+    const file = await writeLog("2026-06-02/20260602-120000/x.log", "a\n");
+    await expect(tailFile(file, 0)).rejects.toThrow(/positive integer/);
+    await expect(tailFile(file, -1)).rejects.toThrow(/positive integer/);
+    await expect(tailFile(file, 1.5)).rejects.toThrow(/positive integer/);
+  });
+
+  it("rejects paths outside the logs root", async () => {
+    const outside = path.join(siegeHome, "secret.txt");
+    await fsp.writeFile(outside, "secret\n", "utf8");
+    await expect(tailFile(outside, 10)).rejects.toThrow(/escape/);
+  });
+
+  it("rejects traversal attempts", async () => {
+    await expect(
+      tailFile(path.join(siegeHome, "logs", "..", "passwd"), 10),
+    ).rejects.toThrow(/escape/);
+  });
+
+  it("handles a large file efficiently by reverse-reading", async () => {
+    // 50k lines, ~500KB
+    const lines = Array.from({ length: 50_000 }, (_, i) => `entry-${i}`);
+    const file = await writeLog(
+      "2026-06-02/20260602-120000/huge.log",
+      lines.join("\n") + "\n",
+    );
+    const out = await tailFile(file, 200);
+    expect(out.lines).toHaveLength(200);
+    expect(out.lines[0]).toBe("entry-49800");
+    expect(out.lines[199]).toBe("entry-49999");
+  });
+});
+
+describe("parseCurrentItem", () => {
+  it("returns null on empty input", () => {
+    expect(parseCurrentItem([])).toBeNull();
+  });
+
+  it("returns null when no item markers are present", () => {
+    expect(parseCurrentItem(["[INFO] some line", "[INFO] another"])).toBeNull();
+  });
+
+  it("returns the most recent open item (unmatched ▶)", () => {
+    const lines = [
+      "[2026-06-02 18:40:23] [INFO] ▶ #2: lib/siege.ts: helpers",
+      "[2026-06-02 18:40:24] [INFO]   skip — PR exists",
+      "[2026-06-02 18:40:25] [INFO] ▶ #3: lib/gh.ts: wrapper",
+      "[2026-06-02 18:47:30] [INFO]   PR: https://...",
+    ];
+    expect(parseCurrentItem(lines)).toEqual({
+      issue: 3,
+      title: "lib/gh.ts: wrapper",
+    });
+  });
+
+  it("returns null when every ▶ has a matching ▼ done", () => {
+    const lines = [
+      "[2026-06-02 18:40:23] [INFO] ▶ #2: lib/siege.ts",
+      "[2026-06-02 18:47:36] [INFO] ▼ #2 done",
+      "[2026-06-02 18:47:38] [INFO] ▶ #3: lib/gh.ts",
+      "[2026-06-02 18:55:00] [INFO] ▼ #3 done",
+    ];
+    expect(parseCurrentItem(lines)).toBeNull();
+  });
+
+  it("skips items that ended later in the log", () => {
+    const lines = [
+      "[2026-06-02 18:40:23] [INFO] ▶ #2: starting",
+      "[2026-06-02 18:40:25] [INFO] ▶ #3: also starting",
+      "[2026-06-02 18:47:36] [INFO] ▼ #3 done",
+    ];
+    expect(parseCurrentItem(lines)).toEqual({
+      issue: 2,
+      title: "starting",
+    });
+  });
+
+  it("handles title with colons inside", () => {
+    const lines = [
+      "[2026-06-02 18:40:23] [INFO] ▶ #4: API routes: /api/siege/repos and /api/siege/status",
+    ];
+    expect(parseCurrentItem(lines)).toEqual({
+      issue: 4,
+      title: "API routes: /api/siege/repos and /api/siege/status",
+    });
+  });
+});
+
+describe("isCapReached", () => {
+  it("returns false for empty input", () => {
+    expect(isCapReached([])).toBe(false);
+  });
+
+  it("returns false when no cap line present", () => {
+    expect(isCapReached(["just some line", "another line"])).toBe(false);
+  });
+
+  it("detects the canonical cap-reached watchdog line", () => {
+    expect(
+      isCapReached([
+        "[2026-06-02 18:40:20] [WARN] wall-clock cap reached (8h) — terminating siege",
+      ]),
+    ).toBe(true);
+  });
+
+  it("is case insensitive", () => {
+    expect(
+      isCapReached(["WALL-CLOCK CAP REACHED at 8h"]),
+    ).toBe(true);
+  });
+});
+
+describe("findLatestRunLogPath", () => {
+  it("returns null when there are no runs", async () => {
+    expect(await findLatestRunLogPath()).toBeNull();
+  });
+
+  it("returns null when the latest run has no log files", async () => {
+    await fsp.mkdir(
+      path.join(siegeHome, "logs", "2026-06-02", "20260602-180000"),
+      { recursive: true },
+    );
+    expect(await findLatestRunLogPath()).toBeNull();
+  });
+
+  it("picks the most recently modified .log across run + items dirs", async () => {
+    const runDir = path.join(
+      siegeHome,
+      "logs",
+      "2026-06-02",
+      "20260602-180000",
+    );
+    const itemsDir = path.join(runDir, "items", "owner_repo");
+    await fsp.mkdir(itemsDir, { recursive: true });
+
+    const startLog = path.join(runDir, "start.log");
+    const repoLog = path.join(runDir, "owner_repo.log");
+    const issueLog = path.join(itemsDir, "issue-2.log");
+
+    await fsp.writeFile(startLog, "start\n", "utf8");
+    await fsp.writeFile(repoLog, "repo\n", "utf8");
+    await fsp.writeFile(issueLog, "issue\n", "utf8");
+
+    const now = Date.now();
+    await fsp.utimes(startLog, now / 1000, (now - 5_000) / 1000);
+    await fsp.utimes(repoLog, now / 1000, (now - 3_000) / 1000);
+    await fsp.utimes(issueLog, now / 1000, now / 1000);
+
+    expect(await findLatestRunLogPath()).toBe(await fsp.realpath(issueLog));
+  });
+
+  it("prefers logs from the newest run", async () => {
+    const oldRun = path.join(
+      siegeHome,
+      "logs",
+      "2026-06-01",
+      "20260601-120000",
+    );
+    const newRun = path.join(
+      siegeHome,
+      "logs",
+      "2026-06-02",
+      "20260602-180000",
+    );
+    await fsp.mkdir(oldRun, { recursive: true });
+    await fsp.mkdir(newRun, { recursive: true });
+    await fsp.writeFile(path.join(oldRun, "start.log"), "old\n", "utf8");
+    await fsp.writeFile(path.join(newRun, "start.log"), "new\n", "utf8");
+    expect(await findLatestRunLogPath()).toBe(
+      await fsp.realpath(path.join(newRun, "start.log")),
+    );
   });
 });

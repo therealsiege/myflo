@@ -6,6 +6,12 @@ import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
+const TAIL_CHUNK_SIZE = 8 * 1024;
+const MAX_TAIL_BYTES = 1 * 1024 * 1024;
+const ITEM_START_RE = /▶\s+#(\d+):\s*(.*?)\s*$/;
+const ITEM_END_RE = /▼\s+#(\d+)\s+done\b/;
+const CAP_REACHED_RE = /wall-clock cap reached/i;
+
 export interface ReposConfig {
   defaults: Record<string, unknown>;
   repos: RepoEntry[];
@@ -804,4 +810,171 @@ export async function killSiege(force = false): Promise<KillSiegeResult> {
     return { killed: [], method: "noop" };
   }
   return { killed, method: force ? "force" : "graceful" };
+}
+
+export interface TailedLog {
+  path: string;
+  lines: string[];
+  size: number;
+  updatedAt: string;
+}
+
+export interface CurrentItem {
+  issue: number;
+  title: string;
+}
+
+async function readTailBytes(
+  fd: fsp.FileHandle,
+  size: number,
+  maxBytes: number,
+): Promise<string> {
+  const start = Math.max(0, size - maxBytes);
+  const length = size - start;
+  if (length <= 0) return "";
+  const buf = Buffer.alloc(length);
+  await fd.read(buf, 0, length, start);
+  return buf.toString("utf8");
+}
+
+export async function tailFile(
+  filePath: string,
+  maxLines: number,
+): Promise<TailedLog> {
+  if (typeof maxLines !== "number" || !Number.isInteger(maxLines) || maxLines < 1) {
+    throw new Error("maxLines must be a positive integer");
+  }
+  const home = resolveSiegeHome();
+  const logsRoot = path.join(home, "logs");
+  const safe = await resolveSafePath(filePath, logsRoot);
+
+  const fd = await fsp.open(safe, "r");
+  try {
+    const stat = await fd.stat();
+    const size = stat.size;
+    if (size === 0) {
+      return {
+        path: safe,
+        lines: [],
+        size: 0,
+        updatedAt: new Date(stat.mtimeMs).toISOString(),
+      };
+    }
+
+    let collected = "";
+    let bytesRead = 0;
+    let cursor = size;
+    while (cursor > 0 && bytesRead < MAX_TAIL_BYTES) {
+      const chunkSize = Math.min(TAIL_CHUNK_SIZE, cursor);
+      const buf = Buffer.alloc(chunkSize);
+      const start = cursor - chunkSize;
+      await fd.read(buf, 0, chunkSize, start);
+      collected = buf.toString("utf8") + collected;
+      bytesRead += chunkSize;
+      cursor = start;
+
+      const newlineCount = countNewlines(collected);
+      if (newlineCount > maxLines) break;
+    }
+
+    let lines = collected.split(/\r?\n/);
+    if (lines.length > 0 && lines[lines.length - 1] === "") {
+      lines.pop();
+    }
+    if (lines.length > maxLines) {
+      lines = lines.slice(lines.length - maxLines);
+    }
+
+    return {
+      path: safe,
+      lines,
+      size,
+      updatedAt: new Date(stat.mtimeMs).toISOString(),
+    };
+  } finally {
+    await fd.close().catch(() => {});
+  }
+}
+
+function countNewlines(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s.charCodeAt(i) === 10) n += 1;
+  }
+  return n;
+}
+
+interface LogCandidate {
+  filePath: string;
+  mtimeMs: number;
+}
+
+async function listLogFilesInDir(dir: string): Promise<LogCandidate[]> {
+  const home = resolveSiegeHome();
+  const entries = await readDirIfPresent(dir);
+  const out: LogCandidate[] = [];
+  for (const name of entries) {
+    if (!name.endsWith(".log")) continue;
+    const full = await resolveSafePath(path.join(dir, name), home);
+    const stat = await fsp.stat(full).catch(() => null);
+    if (stat?.isFile()) out.push({ filePath: full, mtimeMs: stat.mtimeMs });
+  }
+  return out;
+}
+
+export async function findLatestRunLogPath(): Promise<string | null> {
+  const dates = await listRunDates();
+  for (const date of dates) {
+    const runs = await listRuns(date);
+    for (const run of runs) {
+      const candidates: LogCandidate[] = [];
+      candidates.push(...(await listLogFilesInDir(run.logDir)));
+      const home = resolveSiegeHome();
+      const itemsDir = await resolveSafePath(
+        path.join(run.logDir, "items"),
+        home,
+      );
+      const repos = await readDirIfPresent(itemsDir);
+      for (const repoDir of repos) {
+        const repoPath = await resolveSafePath(
+          path.join(itemsDir, repoDir),
+          home,
+        );
+        const stat = await fsp.stat(repoPath).catch(() => null);
+        if (!stat?.isDirectory()) continue;
+        candidates.push(...(await listLogFilesInDir(repoPath)));
+      }
+      if (candidates.length === 0) continue;
+      candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+      return candidates[0].filePath;
+    }
+  }
+  return null;
+}
+
+export function parseCurrentItem(lines: readonly string[]): CurrentItem | null {
+  const ended = new Set<number>();
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    const endMatch = ITEM_END_RE.exec(line);
+    if (endMatch) {
+      const n = Number(endMatch[1]);
+      if (Number.isInteger(n) && n > 0) ended.add(n);
+      continue;
+    }
+    const startMatch = ITEM_START_RE.exec(line);
+    if (!startMatch) continue;
+    const issue = Number(startMatch[1]);
+    if (!Number.isInteger(issue) || issue < 1) continue;
+    if (ended.has(issue)) continue;
+    return { issue, title: startMatch[2] };
+  }
+  return null;
+}
+
+export function isCapReached(lines: readonly string[]): boolean {
+  for (const line of lines) {
+    if (CAP_REACHED_RE.test(line)) return true;
+  }
+  return false;
 }
