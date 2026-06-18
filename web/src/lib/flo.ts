@@ -105,3 +105,20 @@ export async function getSwarmStatus(): Promise<FloSwarmStatus> {
   const stdout = await runFlo(["swarm", "status", "--json"]);
   return JSON.parse(stdout);
 }
+
+export interface FloInbox {
+  slug: string;
+  dir: string;
+  createdAt?: string;
+  handlerHints?: string[];
+  exists: boolean;
+  pending: number;
+  processed: number;
+  failed: number;
+  lastActivity: number | null;
+}
+
+export async function listInboxes(): Promise<FloInbox[]> {
+  const stdout = await runFlo(["inbox", "list", "--json"]);
+  return JSON.parse(stdout);
+}

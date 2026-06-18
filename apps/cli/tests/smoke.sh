@@ -100,6 +100,50 @@ else
   echo "  SKIP  swarm status (no .swarm/ dir)"
 fi
 
+# Inbox registry: add → list → install (macOS only) → uninstall → remove
+export FLO_HOME="$TMP/flo-home"
+mkdir -p "$TMP/inbox-reg-test"
+if $FLO inbox add "$TMP/inbox-reg-test" --slug smoke-reg >/dev/null 2>&1; then
+  echo "  PASS  inbox add"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  inbox add"
+  FAIL=$((FAIL+1))
+fi
+if $FLO inbox list --json 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); assert any(i["slug"]=="smoke-reg" for i in d)' 2>/dev/null; then
+  echo "  PASS  inbox list (json)"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  inbox list (json)"
+  FAIL=$((FAIL+1))
+fi
+if [ "$(uname)" = "Darwin" ]; then
+  if $FLO inbox install smoke-reg --interval 60 >/dev/null 2>&1; then
+    if [ -f "$HOME/Library/LaunchAgents/io.myflo.inbox.smoke-reg.plist" ]; then
+      echo "  PASS  inbox install (plist created)"
+      PASS=$((PASS+1))
+      $FLO inbox uninstall smoke-reg >/dev/null 2>&1
+      if [ ! -f "$HOME/Library/LaunchAgents/io.myflo.inbox.smoke-reg.plist" ]; then
+        echo "  PASS  inbox uninstall (plist removed)"
+        PASS=$((PASS+1))
+      else
+        echo "  FAIL  inbox uninstall did not remove plist"
+        FAIL=$((FAIL+1))
+      fi
+    else
+      echo "  FAIL  inbox install did not create plist"
+      FAIL=$((FAIL+1))
+    fi
+  else
+    echo "  FAIL  inbox install command"
+    FAIL=$((FAIL+1))
+  fi
+else
+  echo "  SKIP  inbox install (macOS-only)"
+fi
+$FLO inbox remove smoke-reg >/dev/null 2>&1 || true
+unset FLO_HOME
+
 echo "--------------"
 echo "$PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then exit 1; fi
