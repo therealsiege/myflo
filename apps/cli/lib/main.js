@@ -12,6 +12,7 @@ import { messagesCommand } from './messages.js';
 import { transcriptsCommand } from './transcripts.js';
 import { tasksCommand } from './tasks-cmd.js';
 import { notesCommand } from './notes-cmd.js';
+import { activityCommand } from './activity.js';
 
 const COMMANDS = {
   help: () => printHelp(),
@@ -33,6 +34,7 @@ const COMMANDS = {
   transcripts: transcriptsCommand,
   tasks: tasksCommand,
   notes: notesCommand,
+  activity: activityCommand,
 };
 
 export async function run(argv) {

@@ -214,3 +214,26 @@ export async function getTaskCounts(): Promise<FloTaskCounts> {
   const stdout = await runFlo(["tasks", "counts", "--json"]);
   return JSON.parse(stdout);
 }
+
+export type FloActivityType = "task" | "note" | "memory" | "inbox" | "transcript" | "terminal" | "checkpoint";
+
+export interface FloActivityEvent {
+  type: FloActivityType;
+  kind: string;
+  id: string;
+  ts: number;
+  timestamp: string;
+  snippet: string;
+  source: string;
+  namespace?: string;
+  tags?: string[];
+}
+
+export async function listActivity(opts: { since?: string; type?: FloActivityType; limit?: number } = {}): Promise<FloActivityEvent[]> {
+  const args = ["activity", "list", "--json"];
+  if (opts.since) args.push("--since", opts.since);
+  if (opts.type) args.push("--type", opts.type);
+  if (opts.limit) args.push("--limit", String(opts.limit));
+  const stdout = await runFlo(args);
+  return JSON.parse(stdout);
+}
