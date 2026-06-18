@@ -1,0 +1,33 @@
+name: flo smoke
+
+on:
+  pull_request:
+    paths:
+      - 'apps/cli/**'
+      - 'web/src/lib/flo.ts'
+      - 'web/src/app/api/flo/**'
+      - 'web/src/app/{swarm,sessions,capabilities,inbox,memory,transcripts}/**'
+      - '.github/workflows/flo-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/cli/**'
+
+jobs:
+  smoke:
+    name: smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run smoke test
+        run: bash apps/cli/tests/smoke.sh
+      - name: Show flo --help on failure
+        if: failure()
+        run: node apps/cli/bin/flo.js --help

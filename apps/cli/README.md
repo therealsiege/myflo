@@ -36,28 +36,39 @@ flo --help
 | `flo memory list [--namespace <ns>] [--json]` / `get` / `delete` / `namespaces` | Inspect and tombstone memory entries. |
 | `flo messages list [<recipient>] [--json]` | List inbox-bridged messages by recipient. |
 | `flo messages read <recipient> <filename>` / `archive` | Read or remove a mailbox file. |
+| `flo transcripts list [--json] [--limit N]` | List sidecar `.txt` transcripts produced by audio inbox drops. |
 | `flo doctor [--json]` | Quick health check: Node version, git, `.claude/`, checkpoints, MCP config, flo binary. |
-| `flo mcp start` | Run as a stdio MCP server. Exposes two tools: `flo_sessions_list` and `flo_guidance_audit`. |
+| `flo mcp start` | Run as a stdio MCP server. Exposes 11 tools (see below). |
 | `flo help` / `flo version` | Self-explanatory. |
 
 ## MCP usage
 
-After `flo migrate`, the server appears in `~/.claude/mcp.json` and you can call its tools from Claude Code. Tools:
+After `flo migrate`, the server appears in `~/.claude/mcp.json` and you can call its tools from Claude Code. **11 tools** registered:
 
-- `flo_sessions_list({ limit?: number })`
-- `flo_guidance_audit({ scope?: "all" | "user" | "project" })`
+- `flo_sessions_list({ limit? })` — Claude Code checkpoints
+- `flo_guidance_audit({ scope? })` — capability dedup report
+- `flo_memory_store({ value, key?, namespace?, tags?, metadata? })`
+- `flo_memory_search({ query?, namespace?, tags?, limit? })`
+- `flo_memory_list({ namespace?, limit? })`
+- `flo_memory_namespaces({})`
+- `flo_inbox_list({})` — registered inboxes with counts
+- `flo_messages_list({})` — bridged messages by recipient
+- `flo_swarm_status({})` — `.swarm/` state + q-learning summary
+- `flo_transcribe({ file, model? })` — local audio transcription
+- `flo_transcribe_detect({})` — which transcription tool is available
 
 The repo's own `.claude/settings.json` already registers `flo` alongside the existing `claude-flow` server — both coexist.
 
 ## Web UI
 
-The local command center at `web/` (Next.js 16, Tailwind v4, shadcn) exposes two flo panels:
+The local command center at `web/` (Next.js 16, Tailwind v4, shadcn) exposes six flo panels:
 
 - `/swarm` — `.swarm/state.json` + q-learning model summary
 - `/memory` — namespace browser + substring search across `~/.flo/memory/`
 - `/sessions` — table view of `.claude/checkpoints/`
 - `/capabilities` — capability audit summary with duplicate ranking
 - `/inbox` — registered inboxes with pending/processed/failed counts
+- `/transcripts` — sidecar transcripts from inbox audio drops
 
 ```bash
 cd web && pnpm install && pnpm dev --port 3030

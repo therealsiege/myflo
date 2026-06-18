@@ -4,6 +4,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
   Activity,
+  AudioLines,
   Brain,
   FileText,
   FolderGit2,
@@ -43,6 +44,7 @@ const floNav: NavItem[] = [
   { href: "/sessions", label: "Sessions", icon: History },
   { href: "/capabilities", label: "Capabilities", icon: Sparkles },
   { href: "/inbox", label: "Inbox", icon: Mailbox },
+  { href: "/transcripts", label: "Transcripts", icon: AudioLines },
 ]
 
 export const NAV_ITEMS: NavItem[] = [...primaryNav, ...secondaryNav, ...floNav]

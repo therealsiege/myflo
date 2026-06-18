@@ -68,13 +68,27 @@ else
   PASS=$((PASS+1))
 fi
 
-# MCP handshake: send initialize + tools/list, expect two response lines
+# MCP handshake: send initialize + tools/list, expect expanded toolset
 RESP=$(printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n' | $FLO mcp start 2>/dev/null)
-if echo "$RESP" | grep -q '"protocolVersion":"2024-11-05"' && echo "$RESP" | grep -q 'flo_sessions_list'; then
-  echo "  PASS  mcp start (initialize + tools/list)"
+if echo "$RESP" | grep -q '"protocolVersion":"2024-11-05"' \
+  && echo "$RESP" | grep -q 'flo_sessions_list' \
+  && echo "$RESP" | grep -q 'flo_memory_store' \
+  && echo "$RESP" | grep -q 'flo_inbox_list' \
+  && echo "$RESP" | grep -q 'flo_transcribe'; then
+  echo "  PASS  mcp start (initialize + tools/list, expanded)"
   PASS=$((PASS+1))
 else
-  echo "  FAIL  mcp start (unexpected response)"
+  echo "  FAIL  mcp start (unexpected response or missing tools)"
+  FAIL=$((FAIL+1))
+fi
+
+# MCP call: round-trip a tool to exercise the dispatch path
+MCP_CALL=$(printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"flo_memory_namespaces","arguments":{}}}\n' | $FLO mcp start 2>/dev/null)
+if echo "$MCP_CALL" | grep -q '"content"'; then
+  echo "  PASS  mcp tools/call (flo_memory_namespaces)"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  mcp tools/call did not return content"
   FAIL=$((FAIL+1))
 fi
 
@@ -198,6 +212,16 @@ else
   echo "  SKIP  inbox install (macOS-only)"
 fi
 $FLO inbox remove smoke-reg >/dev/null 2>&1 || true
+
+# Transcripts: returns JSON array (empty is OK)
+if $FLO transcripts list --json | python3 -c 'import sys,json; d=json.load(sys.stdin); assert isinstance(d, list)' 2>/dev/null; then
+  echo "  PASS  transcripts list (json shape)"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  transcripts list (json shape)"
+  FAIL=$((FAIL+1))
+fi
+
 unset FLO_HOME
 
 echo "--------------"

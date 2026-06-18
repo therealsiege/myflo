@@ -161,3 +161,21 @@ export async function searchMemory(opts: { query: string; namespace?: string; ta
   const stdout = await runFlo(args);
   return JSON.parse(stdout);
 }
+
+export interface FloTranscript {
+  inboxSlug: string;
+  inboxDir: string;
+  audioPath: string;
+  audioFilename: string;
+  sidecarPath: string;
+  audioBytes: number;
+  mtime: number;
+  chars: number;
+  snippet: string;
+  fullText: string;
+}
+
+export async function listTranscripts(limit = 100): Promise<FloTranscript[]> {
+  const stdout = await runFlo(["transcripts", "list", "--json", "--limit", String(limit)]);
+  return JSON.parse(stdout);
+}
