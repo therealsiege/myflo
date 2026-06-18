@@ -8,6 +8,7 @@ import {
   FolderGit2,
   History,
   Inbox,
+  Mailbox,
   Network,
   Settings,
   Sparkles,
@@ -39,6 +40,7 @@ const floNav: NavItem[] = [
   { href: "/swarm", label: "Swarm", icon: Network },
   { href: "/sessions", label: "Sessions", icon: History },
   { href: "/capabilities", label: "Capabilities", icon: Sparkles },
+  { href: "/inbox", label: "Inbox", icon: Mailbox },
 ]
 
 export const NAV_ITEMS: NavItem[] = [...primaryNav, ...secondaryNav, ...floNav]
