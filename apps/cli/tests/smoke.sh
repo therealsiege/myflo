@@ -264,6 +264,51 @@ else
   FAIL=$((FAIL+1))
 fi
 [ -n "$TASK_ID" ] && $FLO tasks delete "$TASK_ID" >/dev/null 2>&1 || true
+# Terminal-attach: add/list/remove
+if $FLO session terminal-add smoke-term --cwd "$TMP" --app ghostty --title "smoke" >/dev/null 2>&1; then
+  echo "  PASS  session terminal-add"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  session terminal-add"
+  FAIL=$((FAIL+1))
+fi
+if $FLO session terminal-list --json | python3 -c 'import sys,json; d=json.load(sys.stdin); assert any(t["slug"]=="smoke-term" for t in d)' 2>/dev/null; then
+  echo "  PASS  session terminal-list (json)"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  session terminal-list (json)"
+  FAIL=$((FAIL+1))
+fi
+if $FLO session terminal-remove smoke-term >/dev/null 2>&1; then
+  echo "  PASS  session terminal-remove"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  session terminal-remove"
+  FAIL=$((FAIL+1))
+fi
+
+# BM25 ranking: discriminating query "refresh oauth2" should hit JWT entry alone
+$FLO memory store --value "JWT auth with refresh tokens and OAuth2" --namespace bm25-test >/dev/null 2>&1
+$FLO memory store --value "Stripe payment integration handles webhooks" --namespace bm25-test >/dev/null 2>&1
+$FLO memory store --value "Auth tokens signed with HS256 keys" --namespace bm25-test >/dev/null 2>&1
+TOP_SCORE_VAL=$($FLO memory search "refresh oauth2" --namespace bm25-test --json 2>/dev/null \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d[0]["value"] if d else "")' 2>/dev/null)
+if echo "$TOP_SCORE_VAL" | grep -q "JWT auth"; then
+  echo "  PASS  memory search BM25 ranking (JWT entry top)"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  memory search BM25 ranking (got: $TOP_SCORE_VAL)"
+  FAIL=$((FAIL+1))
+fi
+WEBHOOK_TOP=$($FLO memory search "webhook" --namespace bm25-test --json 2>/dev/null \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d[0]["value"] if d else "")' 2>/dev/null)
+if echo "$WEBHOOK_TOP" | grep -q "Stripe"; then
+  echo "  PASS  memory search BM25 ranking (webhook → Stripe entry)"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  memory search BM25 ranking (webhook expected Stripe, got: $WEBHOOK_TOP)"
+  FAIL=$((FAIL+1))
+fi
 
 unset FLO_HOME
 

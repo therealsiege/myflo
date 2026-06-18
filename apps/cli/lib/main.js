@@ -13,6 +13,7 @@ import { transcriptsCommand } from './transcripts.js';
 import { tasksCommand } from './tasks-cmd.js';
 import { notesCommand } from './notes-cmd.js';
 import { activityCommand } from './activity.js';
+import { sessionCommand } from './terminal-attach.js';
 
 const COMMANDS = {
   help: () => printHelp(),
@@ -35,6 +36,7 @@ const COMMANDS = {
   tasks: tasksCommand,
   notes: notesCommand,
   activity: activityCommand,
+  session: sessionCommand,
 };
 
 export async function run(argv) {
