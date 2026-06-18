@@ -17,6 +17,8 @@ import { sessionCommand } from './terminal-attach.js';
 import { setupCommand } from './setup.js';
 import { exportCommand, importCommand } from './export.js';
 import { logCommand } from './log-cmd.js';
+import { completionsCommand } from './completions.js';
+import { editCommand } from './edit-cmd.js';
 
 const COMMANDS = {
   help: () => printHelp(),
@@ -44,6 +46,8 @@ const COMMANDS = {
   export: exportCommand,
   import: importCommand,
   log: logCommand,
+  completions: completionsCommand,
+  edit: editCommand,
 };
 
 export async function run(argv) {
