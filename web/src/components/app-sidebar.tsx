@@ -41,6 +41,7 @@ const secondaryNav: NavItem[] = [
 
 const floNav: NavItem[] = [
   { href: "/swarm", label: "Swarm", icon: Network },
+  { href: "/activity", label: "Activity", icon: Activity },
   { href: "/memory", label: "Memory", icon: Brain },
   { href: "/tasks", label: "Tasks", icon: CheckSquare },
   { href: "/sessions", label: "Sessions", icon: History },
