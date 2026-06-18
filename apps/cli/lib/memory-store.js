@@ -83,40 +83,113 @@ export async function getEntry({ namespace = 'default', id, key }) {
   return null;
 }
 
+// BM25 parameters. Reasonable defaults for short prose entries.
+const BM25_K1 = 1.5;
+const BM25_B = 0.75;
+
+// Stopwords pruned aggressively — flo memory entries are short, every
+// non-stopword carries signal. Plurals normalized with a simple suffix rule.
+const STOPWORDS = new Set([
+  'a','an','the','is','are','was','were','be','been','being','to','of','in','on','at','for','and','or','but',
+  'with','from','by','as','it','its','this','that','these','those','i','you','we','they','he','she','him',
+  'her','them','us','our','your','my','their','if','then','else','so','not','no','do','does','did','have',
+  'has','had','will','would','can','could','should','may','might','must','shall','about','into','out','up','down',
+]);
+
+function tokenize(text) {
+  if (!text) return [];
+  return String(text)
+    .toLowerCase()
+    .split(/[^a-z0-9_]+/)
+    .filter((t) => t && t.length > 1 && !STOPWORDS.has(t))
+    .map(stem);
+}
+
+function stem(word) {
+  // Tiny rule-based stemmer: drop common English suffixes. Cheap, no Porter
+  // library needed for the cardinality flo deals with.
+  if (word.length <= 3) return word;
+  for (const suffix of ['ization', 'ational', 'tional', 'iveness', 'fulness', 'ousness']) {
+    if (word.endsWith(suffix)) return word.slice(0, -suffix.length);
+  }
+  for (const suffix of ['ization', 'ization', 'ations', 'ations']) {
+    if (word.endsWith(suffix)) return word.slice(0, -suffix.length);
+  }
+  for (const suffix of ['ing', 'ies', 'ied', 'ies', 'ies', 'ous', 'ive']) {
+    if (word.endsWith(suffix) && word.length > suffix.length + 2) return word.slice(0, -suffix.length);
+  }
+  if (word.endsWith('es') && word.length > 4) return word.slice(0, -2);
+  if (word.endsWith('s') && !word.endsWith('ss') && word.length > 3) return word.slice(0, -1);
+  return word;
+}
+
+function buildCorpusStats(entries) {
+  // entries: pre-tokenized [{ id, tokens, tagTokens }]
+  const docFreq = new Map();
+  let totalLen = 0;
+  for (const e of entries) {
+    const unique = new Set(e.tokens);
+    for (const t of unique) docFreq.set(t, (docFreq.get(t) || 0) + 1);
+    totalLen += e.tokens.length;
+  }
+  const N = entries.length;
+  const avgdl = N > 0 ? totalLen / N : 0;
+  return { docFreq, N, avgdl };
+}
+
+function bm25Score(queryTokens, doc, stats) {
+  if (!queryTokens.length || stats.N === 0) return 0;
+  let score = 0;
+  // Term frequency table for this doc
+  const tf = new Map();
+  for (const t of doc.tokens) tf.set(t, (tf.get(t) || 0) + 1);
+  const dl = doc.tokens.length || 1;
+  for (const q of queryTokens) {
+    const f = tf.get(q);
+    if (!f) continue;
+    const df = stats.docFreq.get(q) || 0;
+    // BM25+ idf: log((N - df + 0.5) / (df + 0.5) + 1) — strictly positive
+    const idf = Math.log((stats.N - df + 0.5) / (df + 0.5) + 1);
+    const norm = 1 - BM25_B + BM25_B * (dl / (stats.avgdl || 1));
+    const termScore = idf * ((f * (BM25_K1 + 1)) / (f + BM25_K1 * norm));
+    score += termScore;
+  }
+  return score;
+}
+
 export async function searchEntries({ namespace, query, tags = [], limit = 20 }) {
   const namespaces = namespace ? [namespace] : await listNamespaces();
-  const q = String(query || '').toLowerCase().trim();
+  const queryTokens = tokenize(query);
   const wantTags = new Set(tags.map((t) => String(t).toLowerCase()));
   const out = [];
+
   for (const ns of namespaces) {
-    const entries = await readAllEntries(ns);
-    for (const e of entries) {
-      const haystack = `${e.key || ''} ${e.value}`.toLowerCase();
-      const tagSet = new Set((e.tags || []).map((t) => String(t).toLowerCase()));
-      const tagOverlap = [...wantTags].filter((t) => tagSet.has(t)).length;
-      const tagBoost = tagOverlap > 0 ? 5 + tagOverlap : 0;
-      let score = tagBoost;
-      if (q) {
-        let qScore = 0;
-        if (e.key && e.key.toLowerCase().includes(q)) qScore += 3;
-        if (haystack.includes(q)) qScore += 1 + Math.min(haystack.split(q).length - 1, 4);
-        // term breakdown for multi-word queries
-        const terms = q.split(/\s+/).filter(Boolean);
-        if (terms.length > 1) {
-          const matched = terms.filter((t) => haystack.includes(t)).length;
-          qScore += matched;
-        }
-        if (qScore === 0 && tagOverlap === 0) continue;
-        score += qScore;
-      } else if (tagOverlap === 0) {
-        continue;
-      }
-      out.push({ ...e, _score: score });
+    const raw = await readAllEntries(ns);
+    // Pre-tokenize every entry for IDF stats
+    const docs = raw.map((e) => ({
+      entry: e,
+      tokens: tokenize(`${e.key || ''} ${e.value}`),
+      tagSet: new Set((e.tags || []).map((t) => String(t).toLowerCase())),
+    }));
+    const stats = buildCorpusStats(docs);
+
+    for (const doc of docs) {
+      const tagOverlap = [...wantTags].filter((t) => doc.tagSet.has(t)).length;
+      const tagBoost = tagOverlap > 0 ? 2 + tagOverlap * 0.5 : 0;
+      const textScore = bm25Score(queryTokens, doc, stats);
+      // Optional small key boost — exact key match is highly intentional
+      const keyBoost = doc.entry.key && query && doc.entry.key.toLowerCase().includes(String(query).toLowerCase()) ? 1.5 : 0;
+      const score = textScore + tagBoost + keyBoost;
+      if (score <= 0) continue;
+      out.push({ ...doc.entry, _score: Number(score.toFixed(4)) });
     }
   }
   out.sort((a, b) => b._score - a._score);
   return out.slice(0, limit);
 }
+
+// Exported for direct testing
+export const _searchInternals = { tokenize, stem, buildCorpusStats, bm25Score };
 
 export async function listNamespaces() {
   await ensureDir();
