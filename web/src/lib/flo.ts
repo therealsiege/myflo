@@ -122,3 +122,42 @@ export async function listInboxes(): Promise<FloInbox[]> {
   const stdout = await runFlo(["inbox", "list", "--json"]);
   return JSON.parse(stdout);
 }
+
+export interface FloMemoryEntry {
+  id: string;
+  namespace: string;
+  key: string | null;
+  value: string;
+  tags: string[];
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  _score?: number;
+}
+
+export interface FloMemoryNamespace {
+  namespace: string;
+  count: number;
+  lastEntryAt: string | null;
+}
+
+export async function listMemoryNamespaces(): Promise<FloMemoryNamespace[]> {
+  const stdout = await runFlo(["memory", "namespaces", "--json"]);
+  return JSON.parse(stdout);
+}
+
+export async function listMemoryEntries(opts: { namespace?: string; limit?: number } = {}): Promise<FloMemoryEntry[]> {
+  const args = ["memory", "list", "--json"];
+  if (opts.namespace) args.push("--namespace", opts.namespace);
+  if (opts.limit) args.push("--limit", String(opts.limit));
+  const stdout = await runFlo(args);
+  return JSON.parse(stdout);
+}
+
+export async function searchMemory(opts: { query: string; namespace?: string; tags?: string[]; limit?: number }): Promise<FloMemoryEntry[]> {
+  const args = ["memory", "search", opts.query, "--json"];
+  if (opts.namespace) args.push("--namespace", opts.namespace);
+  if (opts.tags && opts.tags.length) args.push("--tags", opts.tags.join(","));
+  if (opts.limit) args.push("--limit", String(opts.limit));
+  const stdout = await runFlo(args);
+  return JSON.parse(stdout);
+}

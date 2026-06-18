@@ -6,6 +6,8 @@ import { homedir } from 'node:os';
 import { transcribeAndSaveSidecar } from './transcribe.js';
 import { addInbox, removeInbox, listInboxes } from './inbox-registry.js';
 import { installLaunchAgent, uninstallLaunchAgent, listInstalledAgents } from './inbox-install.js';
+import { storeEntry } from './memory-store.js';
+import { writeFile, copyFile } from 'node:fs/promises';
 
 const SETTLE_MS = 2000;
 const HANDLED_DIR = '.processed';
@@ -146,7 +148,11 @@ async function handle(dir, filename) {
     if (ext === '.md') {
       const raw = await readFile(path, 'utf8');
       const fm = parseFrontmatter(raw);
+      const body = raw.replace(/^---[\s\S]*?---\r?\n?/, '');
+      const bridge = await bridgeMarkdownMessage({ filename, fm, body });
       action = `md to=${fm.to || '?'} from=${fm.from || '?'} subject=${fm.subject || '?'}`;
+      if (bridge.mailbox) action += ` mailbox=${bridge.mailbox}`;
+      if (bridge.memoryId) action += ` memory=${bridge.memoryId}`;
     } else if (AUDIO_EXTS.has(ext)) {
       const size = (await stat(path)).size;
       process.stderr.write(`flo inbox: transcribing ${basename(path)} (${size}b)…\n`);
@@ -179,6 +185,40 @@ function parseFrontmatter(content) {
     fm[kv[1]] = kv[2].trim().replace(/^["']|["']$/g, '');
   }
   return fm;
+}
+
+function safeRecipient(s) {
+  return String(s || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+}
+
+async function bridgeMarkdownMessage({ filename, fm, body }) {
+  const out = { mailbox: null, memoryId: null };
+  const recipient = safeRecipient(fm.to);
+  if (!recipient) return out; // No 'to:' → just log, no routing
+  try {
+    const { homedir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { mkdir } = await import('node:fs/promises');
+    const floHome = process.env.FLO_HOME || join(homedir(), '.flo');
+    const mailboxDir = join(floHome, 'messages', recipient);
+    await mkdir(mailboxDir, { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const from = safeRecipient(fm.from) || 'unknown';
+    const mailboxPath = join(mailboxDir, `${ts}-${from}-${filename}`);
+    await writeFile(mailboxPath, `---\nto: ${recipient}\nfrom: ${from}\nsubject: ${fm.subject || ''}\nreceivedAt: ${new Date().toISOString()}\nsource: ${filename}\n---\n${body}`, 'utf8');
+    out.mailbox = mailboxPath;
+  } catch { /* non-critical */ }
+  try {
+    const entry = await storeEntry({
+      namespace: 'inbox',
+      key: `msg:${recipient}:${Date.now()}`,
+      value: body.trim(),
+      tags: [`to:${recipient}`, fm.from ? `from:${safeRecipient(fm.from)}` : 'from:unknown'],
+      metadata: { to: recipient, from: fm.from || null, subject: fm.subject || null, source: filename },
+    });
+    out.memoryId = entry.id;
+  } catch { /* non-critical */ }
+  return out;
 }
 
 function parseArgs(args) {
