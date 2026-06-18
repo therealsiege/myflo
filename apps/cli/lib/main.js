@@ -7,6 +7,8 @@ import { doctor } from './doctor.js';
 import { mcpServe } from './mcp-server.js';
 import { transcribeCommand } from './transcribe-cmd.js';
 import { swarmStatusCommand } from './swarm.js';
+import { memoryCommand } from './memory-cmd.js';
+import { messagesCommand } from './messages.js';
 
 const COMMANDS = {
   help: () => printHelp(),
@@ -23,6 +25,8 @@ const COMMANDS = {
   mcp: mcpDispatch,
   transcribe: transcribeCommand,
   swarm: swarmDispatch,
+  memory: memoryCommand,
+  messages: messagesCommand,
 };
 
 export async function run(argv) {

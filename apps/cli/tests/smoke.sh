@@ -100,8 +100,64 @@ else
   echo "  SKIP  swarm status (no .swarm/ dir)"
 fi
 
-# Inbox registry: add → list → install (macOS only) → uninstall → remove
+# Memory store: store → list → search → namespaces → bridge from inbox md drop
 export FLO_HOME="$TMP/flo-home"
+if $FLO memory store --value "JWT auth pattern with 1hr refresh" --key smoke-pattern-auth --namespace smoke-patterns --tags auth,security >/dev/null 2>&1; then
+  echo "  PASS  memory store"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  memory store"
+  FAIL=$((FAIL+1))
+fi
+if $FLO memory list --namespace smoke-patterns --json | python3 -c 'import sys,json; d=json.load(sys.stdin); assert len(d)>=1' 2>/dev/null; then
+  echo "  PASS  memory list (json)"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  memory list (json)"
+  FAIL=$((FAIL+1))
+fi
+if $FLO memory search "JWT" --namespace smoke-patterns --json | python3 -c 'import sys,json; d=json.load(sys.stdin); assert any("JWT" in e["value"] for e in d)' 2>/dev/null; then
+  echo "  PASS  memory search (substring)"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  memory search (substring)"
+  FAIL=$((FAIL+1))
+fi
+if $FLO memory namespaces --json | python3 -c 'import sys,json; d=json.load(sys.stdin); assert any(n["namespace"]=="smoke-patterns" for n in d)' 2>/dev/null; then
+  echo "  PASS  memory namespaces"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  memory namespaces"
+  FAIL=$((FAIL+1))
+fi
+
+# Inbox bridge: drop .md with frontmatter → mailbox + memory:inbox entry
+mkdir -p "$TMP/bridge-inbox"
+cat > "$TMP/bridge-inbox/msg.md" <<EOF
+---
+to: architect
+from: tester
+subject: bridge smoke
+---
+Smoke body content.
+EOF
+$FLO inbox watch "$TMP/bridge-inbox" --once >/dev/null 2>&1
+if $FLO messages list architect --json | python3 -c 'import sys,json; d=json.load(sys.stdin); assert len(d)>=1' 2>/dev/null; then
+  echo "  PASS  inbox bridge (mailbox)"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  inbox bridge (mailbox)"
+  FAIL=$((FAIL+1))
+fi
+if $FLO memory list --namespace inbox --json | python3 -c 'import sys,json; d=json.load(sys.stdin); assert any(e.get("metadata",{}).get("to")=="architect" for e in d)' 2>/dev/null; then
+  echo "  PASS  inbox bridge (memory entry)"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  inbox bridge (memory entry)"
+  FAIL=$((FAIL+1))
+fi
+
+# Inbox registry: add → list → install (macOS only) → uninstall → remove
 mkdir -p "$TMP/inbox-reg-test"
 if $FLO inbox add "$TMP/inbox-reg-test" --slug smoke-reg >/dev/null 2>&1; then
   echo "  PASS  inbox add"
