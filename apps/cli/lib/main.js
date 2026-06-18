@@ -15,6 +15,8 @@ import { notesCommand } from './notes-cmd.js';
 import { activityCommand } from './activity.js';
 import { sessionCommand } from './terminal-attach.js';
 import { setupCommand } from './setup.js';
+import { exportCommand, importCommand } from './export.js';
+import { logCommand } from './log-cmd.js';
 
 const COMMANDS = {
   help: () => printHelp(),
@@ -39,6 +41,9 @@ const COMMANDS = {
   activity: activityCommand,
   session: sessionCommand,
   setup: setupCommand,
+  export: exportCommand,
+  import: importCommand,
+  log: logCommand,
 };
 
 export async function run(argv) {
