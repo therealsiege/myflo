@@ -1,11 +1,21 @@
-// Minimal MCP stdio server exposing flo capabilities as tools.
+// MCP stdio server exposing flo capabilities as tools.
 // Protocol: https://spec.modelcontextprotocol.io/specification/
 
 import { createInterface } from 'node:readline';
 import { readCheckpoints } from './sessions.js';
+import { readSwarmState } from './swarm.js';
+import {
+  storeEntry,
+  listEntries,
+  searchEntries,
+  namespaceStats,
+} from './memory-store.js';
+import { listInboxes } from './inbox-registry.js';
+import { listAllMailboxes } from './messages.js';
+import { transcribe, detectTool } from './transcribe.js';
 
 const PROTOCOL_VERSION = '2024-11-05';
-const SERVER_INFO = { name: 'flo', version: '0.1.0' };
+const SERVER_INFO = { name: 'flo', version: '0.2.0' };
 
 const TOOLS = [
   {
@@ -13,9 +23,7 @@ const TOOLS = [
     description: 'List Claude Code session checkpoints from .claude/checkpoints/ in the current project.',
     inputSchema: {
       type: 'object',
-      properties: {
-        limit: { type: 'number', description: 'Max results (default: 25)' },
-      },
+      properties: { limit: { type: 'number', description: 'Max results (default: 25)' } },
     },
   },
   {
@@ -23,10 +31,84 @@ const TOOLS = [
     description: 'Scan ~/.claude/{skills,commands,agents}/ and project .claude/ for duplicate or undocumented capabilities. Returns markdown report.',
     inputSchema: {
       type: 'object',
+      properties: { scope: { type: 'string', enum: ['all', 'user', 'project'] } },
+    },
+  },
+  {
+    name: 'flo_memory_store',
+    description: 'Append an entry to flo memory (~/.flo/memory/<namespace>.jsonl). Returns the new entry with its id.',
+    inputSchema: {
+      type: 'object',
       properties: {
-        scope: { type: 'string', enum: ['all', 'user', 'project'], description: 'Scope filter (default: all)' },
+        value: { type: 'string', description: 'Entry value (required)' },
+        key: { type: 'string', description: 'Optional human-readable key' },
+        namespace: { type: 'string', description: 'Namespace (default: "default")' },
+        tags: { type: 'array', items: { type: 'string' } },
+        metadata: { type: 'object' },
+      },
+      required: ['value'],
+    },
+  },
+  {
+    name: 'flo_memory_search',
+    description: 'Substring + tag search across flo memory namespaces. Returns scored matches.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+        namespace: { type: 'string' },
+        tags: { type: 'array', items: { type: 'string' } },
+        limit: { type: 'number' },
       },
     },
+  },
+  {
+    name: 'flo_memory_list',
+    description: 'List the most recent entries in a flo memory namespace.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        namespace: { type: 'string', description: 'Namespace (default: "default")' },
+        limit: { type: 'number' },
+      },
+    },
+  },
+  {
+    name: 'flo_memory_namespaces',
+    description: 'List all flo memory namespaces with entry counts and last-entry timestamps.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'flo_inbox_list',
+    description: 'List registered flo inboxes from ~/.flo/inboxes.json with pending/processed/failed counts.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'flo_messages_list',
+    description: 'List inbox-bridged messages from ~/.flo/messages/<recipient>/. Returns one entry per recipient with their messages.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'flo_swarm_status',
+    description: 'Read .swarm/state.json and .swarm/q-learning-model.json from the project. Returns swarm objective, agent plan, and q-learning stats.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'flo_transcribe',
+    description: 'Transcribe a local audio file (m4a/wav/mp3/aiff/flac). Auto-detects mlx-whisper / openai-whisper / whisper-cpp. No cloud calls.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', description: 'Absolute path to audio file' },
+        model: { type: 'string', description: 'Whisper model (base/small/medium/large; default: base)' },
+      },
+      required: ['file'],
+    },
+  },
+  {
+    name: 'flo_transcribe_detect',
+    description: 'Report which local transcription tool would be used (mlx-whisper / openai-whisper / whisper-cpp).',
+    inputSchema: { type: 'object', properties: {} },
   },
 ];
 
@@ -86,23 +168,80 @@ async function handle(req) {
 }
 
 async function callTool({ name, arguments: args = {} }) {
-  if (name === 'flo_sessions_list') {
-    const limit = typeof args.limit === 'number' ? args.limit : 25;
-    const records = await readCheckpoints(undefined, limit);
-    return { content: [{ type: 'text', text: JSON.stringify(records, null, 2) }] };
+  switch (name) {
+    case 'flo_sessions_list': {
+      const records = await readCheckpoints(undefined, typeof args.limit === 'number' ? args.limit : 25);
+      return textResult(JSON.stringify(records, null, 2));
+    }
+    case 'flo_guidance_audit': {
+      const { runAuditJson } = await loadAuditRunner();
+      const json = await runAuditJson({ scope: args.scope || 'all' });
+      return textResult(json);
+    }
+    case 'flo_memory_store': {
+      if (!args.value) throw new Error('flo_memory_store: value is required');
+      const entry = await storeEntry({
+        namespace: args.namespace,
+        key: args.key,
+        value: args.value,
+        tags: args.tags,
+        metadata: args.metadata,
+      });
+      return textResult(JSON.stringify(entry, null, 2));
+    }
+    case 'flo_memory_search': {
+      const results = await searchEntries({
+        namespace: args.namespace,
+        query: args.query || '',
+        tags: args.tags || [],
+        limit: typeof args.limit === 'number' ? args.limit : 20,
+      });
+      return textResult(JSON.stringify(results, null, 2));
+    }
+    case 'flo_memory_list': {
+      const entries = await listEntries({
+        namespace: args.namespace || 'default',
+        limit: typeof args.limit === 'number' ? args.limit : 50,
+      });
+      return textResult(JSON.stringify(entries, null, 2));
+    }
+    case 'flo_memory_namespaces': {
+      const stats = await namespaceStats();
+      return textResult(JSON.stringify(stats, null, 2));
+    }
+    case 'flo_inbox_list': {
+      const list = await listInboxes();
+      return textResult(JSON.stringify(list, null, 2));
+    }
+    case 'flo_messages_list': {
+      const list = await listAllMailboxes();
+      return textResult(JSON.stringify(list, null, 2));
+    }
+    case 'flo_swarm_status': {
+      const state = await readSwarmState();
+      return textResult(JSON.stringify(state, null, 2));
+    }
+    case 'flo_transcribe': {
+      if (!args.file) throw new Error('flo_transcribe: file is required');
+      const result = await transcribe(args.file, { model: args.model });
+      return textResult(JSON.stringify(result, null, 2));
+    }
+    case 'flo_transcribe_detect': {
+      const tool = await detectTool();
+      return textResult(JSON.stringify({ tool: tool?.name || null, binary: tool?.binary || null }));
+    }
+    default:
+      throw new Error(`unknown tool: ${name}`);
   }
-  if (name === 'flo_guidance_audit') {
-    // Lazy import to avoid pulling guidance-audit into MCP startup path
-    const { runAuditJson } = await loadAuditRunner();
-    const json = await runAuditJson({ scope: args.scope || 'all' });
-    return { content: [{ type: 'text', text: json }] };
-  }
-  throw new Error(`unknown tool: ${name}`);
+}
+
+function textResult(text) {
+  return { content: [{ type: 'text', text }] };
 }
 
 async function loadAuditRunner() {
-  // Spawn ourselves with `guidance audit --json --quiet` to keep audit logic in
-  // one place. Uses execFile with an argument array (no shell) for safety.
+  // Spawn ourselves with `guidance audit --json --quiet` to reuse the markdown
+  // renderer side. Uses execFile with an argument array (no shell).
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
   const execFileAsync = promisify(execFile);
