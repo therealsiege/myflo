@@ -179,3 +179,38 @@ export async function listTranscripts(limit = 100): Promise<FloTranscript[]> {
   const stdout = await runFlo(["transcripts", "list", "--json", "--limit", String(limit)]);
   return JSON.parse(stdout);
 }
+
+export interface FloTask {
+  id: string;
+  subject: string;
+  description: string | null;
+  status: "pending" | "in_progress" | "completed";
+  tags: string[];
+  owner: string | null;
+  parent: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface FloTaskCounts {
+  total: number;
+  pending: number;
+  in_progress: number;
+  completed: number;
+}
+
+export async function listTasks(opts: { status?: string; owner?: string; tag?: string; limit?: number } = {}): Promise<FloTask[]> {
+  const args = ["tasks", "list", "--json"];
+  if (opts.status) args.push("--status", opts.status);
+  if (opts.owner) args.push("--owner", opts.owner);
+  if (opts.tag) args.push("--tag", opts.tag);
+  if (opts.limit) args.push("--limit", String(opts.limit));
+  const stdout = await runFlo(args);
+  return JSON.parse(stdout);
+}
+
+export async function getTaskCounts(): Promise<FloTaskCounts> {
+  const stdout = await runFlo(["tasks", "counts", "--json"]);
+  return JSON.parse(stdout);
+}

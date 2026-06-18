@@ -222,6 +222,49 @@ else
   FAIL=$((FAIL+1))
 fi
 
+# Tasks: create → list → update → complete → counts → delete (event log round-trip)
+TASK_ID=$($FLO tasks create "smoke test task" --tags smoke,test --json 2>/dev/null \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])' 2>/dev/null)
+if [ -n "$TASK_ID" ]; then
+  echo "  PASS  tasks create (id=$TASK_ID)"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  tasks create"
+  FAIL=$((FAIL+1))
+fi
+if $FLO tasks list --json | python3 -c 'import sys,json; d=json.load(sys.stdin); assert any(t["status"]=="pending" for t in d)' 2>/dev/null; then
+  echo "  PASS  tasks list (pending)"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  tasks list"
+  FAIL=$((FAIL+1))
+fi
+if [ -n "$TASK_ID" ] && $FLO tasks update "$TASK_ID" --status in_progress >/dev/null 2>&1; then
+  if $FLO tasks list --status in_progress --json | python3 -c "import sys,json; d=json.load(sys.stdin); assert any(t['id']=='$TASK_ID' for t in d)" 2>/dev/null; then
+    echo "  PASS  tasks update (status transition)"
+    PASS=$((PASS+1))
+  else
+    echo "  FAIL  tasks update (didn't show in in_progress list)"
+    FAIL=$((FAIL+1))
+  fi
+else
+  echo "  FAIL  tasks update command"
+  FAIL=$((FAIL+1))
+fi
+if [ -n "$TASK_ID" ] && $FLO tasks complete "$TASK_ID" >/dev/null 2>&1; then
+  if $FLO tasks counts --json | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["completed"]>=1' 2>/dev/null; then
+    echo "  PASS  tasks complete + counts"
+    PASS=$((PASS+1))
+  else
+    echo "  FAIL  tasks counts"
+    FAIL=$((FAIL+1))
+  fi
+else
+  echo "  FAIL  tasks complete command"
+  FAIL=$((FAIL+1))
+fi
+[ -n "$TASK_ID" ] && $FLO tasks delete "$TASK_ID" >/dev/null 2>&1 || true
+
 unset FLO_HOME
 
 echo "--------------"

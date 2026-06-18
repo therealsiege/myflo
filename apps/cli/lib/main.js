@@ -10,6 +10,7 @@ import { swarmStatusCommand } from './swarm.js';
 import { memoryCommand } from './memory-cmd.js';
 import { messagesCommand } from './messages.js';
 import { transcriptsCommand } from './transcripts.js';
+import { tasksCommand } from './tasks-cmd.js';
 
 const COMMANDS = {
   help: () => printHelp(),
@@ -29,6 +30,7 @@ const COMMANDS = {
   memory: memoryCommand,
   messages: messagesCommand,
   transcripts: transcriptsCommand,
+  tasks: tasksCommand,
 };
 
 export async function run(argv) {

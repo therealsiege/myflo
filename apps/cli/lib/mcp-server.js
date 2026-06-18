@@ -13,9 +13,16 @@ import {
 import { listInboxes } from './inbox-registry.js';
 import { listAllMailboxes } from './messages.js';
 import { transcribe, detectTool } from './transcribe.js';
+import {
+  createTask,
+  updateTask,
+  completeTask,
+  listTasks,
+  taskCounts,
+} from './tasks-store.js';
 
 const PROTOCOL_VERSION = '2024-11-05';
-const SERVER_INFO = { name: 'flo', version: '0.2.0' };
+const SERVER_INFO = { name: 'flo', version: '0.3.0' };
 
 const TOOLS = [
   {
@@ -108,6 +115,65 @@ const TOOLS = [
   {
     name: 'flo_transcribe_detect',
     description: 'Report which local transcription tool would be used (mlx-whisper / openai-whisper / whisper-cpp).',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'flo_tasks_create',
+    description: 'Create a persistent task in flo. Survives across sessions. Stored in ~/.flo/tasks.jsonl.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        subject: { type: 'string' },
+        description: { type: 'string' },
+        tags: { type: 'array', items: { type: 'string' } },
+        owner: { type: 'string' },
+        parent: { type: 'string', description: 'Parent task id for subtasks' },
+        status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] },
+      },
+      required: ['subject'],
+    },
+  },
+  {
+    name: 'flo_tasks_list',
+    description: 'List flo tasks. Optional filters: status / owner / tag.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] },
+        owner: { type: 'string' },
+        tag: { type: 'string' },
+        limit: { type: 'number' },
+      },
+    },
+  },
+  {
+    name: 'flo_tasks_update',
+    description: 'Update a flo task. Can change status, subject, description, tags, owner.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        subject: { type: 'string' },
+        description: { type: 'string' },
+        tags: { type: 'array', items: { type: 'string' } },
+        owner: { type: 'string' },
+        status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'flo_tasks_complete',
+    description: 'Mark a flo task as completed.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'flo_tasks_counts',
+    description: 'Get counts of flo tasks by status.',
     inputSchema: { type: 'object', properties: {} },
   },
 ];
@@ -229,6 +295,34 @@ async function callTool({ name, arguments: args = {} }) {
     case 'flo_transcribe_detect': {
       const tool = await detectTool();
       return textResult(JSON.stringify({ tool: tool?.name || null, binary: tool?.binary || null }));
+    }
+    case 'flo_tasks_create': {
+      if (!args.subject) throw new Error('flo_tasks_create: subject is required');
+      const task = await createTask(args);
+      return textResult(JSON.stringify(task, null, 2));
+    }
+    case 'flo_tasks_list': {
+      const tasks = await listTasks({
+        status: args.status,
+        owner: args.owner,
+        tag: args.tag,
+        limit: typeof args.limit === 'number' ? args.limit : 100,
+      });
+      return textResult(JSON.stringify(tasks, null, 2));
+    }
+    case 'flo_tasks_update': {
+      if (!args.id) throw new Error('flo_tasks_update: id is required');
+      const task = await updateTask(args);
+      return textResult(JSON.stringify(task, null, 2));
+    }
+    case 'flo_tasks_complete': {
+      if (!args.id) throw new Error('flo_tasks_complete: id is required');
+      const task = await completeTask(args.id);
+      return textResult(JSON.stringify(task, null, 2));
+    }
+    case 'flo_tasks_counts': {
+      const counts = await taskCounts();
+      return textResult(JSON.stringify(counts, null, 2));
     }
     default:
       throw new Error(`unknown tool: ${name}`);
