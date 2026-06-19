@@ -6,7 +6,8 @@ import { inboxCommand } from './inbox.js';
 import { doctor } from './doctor.js';
 import { mcpServe } from './mcp-server.js';
 import { transcribeCommand } from './transcribe-cmd.js';
-import { swarmStatusCommand } from './swarm.js';
+import { swarmCommand } from './swarm.js';
+import { agentsCommand } from './agents-cmd.js';
 import { memoryCommand } from './memory-cmd.js';
 import { messagesCommand } from './messages.js';
 import { transcriptsCommand } from './transcripts.js';
@@ -34,7 +35,7 @@ const COMMANDS = {
   doctor: (args) => doctor(args),
   mcp: mcpDispatch,
   transcribe: transcribeCommand,
-  swarm: swarmDispatch,
+  swarm: swarmCommand,
   memory: memoryCommand,
   messages: messagesCommand,
   transcripts: transcriptsCommand,
@@ -48,6 +49,7 @@ const COMMANDS = {
   log: logCommand,
   completions: completionsCommand,
   edit: editCommand,
+  agents: agentsCommand,
 };
 
 export async function run(argv) {
@@ -89,10 +91,3 @@ async function mcpDispatch(args) {
   process.exit(2);
 }
 
-async function swarmDispatch(args) {
-  const [sub = 'status', ...rest] = args;
-  if (sub === 'status') return swarmStatusCommand(rest);
-  console.error(`flo swarm: unknown subcommand '${sub}'`);
-  console.error(`Available: status`);
-  process.exit(2);
-}
