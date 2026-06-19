@@ -1,6 +1,11 @@
-// File-backed JSON memory store at ~/.flo/memory/<namespace>.jsonl
-// Append-only. Tombstones for deletes. No vector search yet — substring + tag scoring.
-// Keeps flo standalone; doesn't depend on ruflo's AgentDB.
+// Memory store with two backends:
+//   - jsonl  (default) — file-backed JSONL per namespace under ~/.flo/memory/<ns>.jsonl
+//                        Pure JS, no native deps, BM25 ranking. Zero install cost.
+//   - agentdb         — SQLite-backed via @myflo/memory's SqlJsBackend. FTS5
+//                        keyword search, optional vector embeddings, scales further.
+//
+// Select via FLO_MEMORY_BACKEND env var or { backend } option on each call.
+// Public API is identical regardless of backend.
 
 import { mkdir, readFile, writeFile, appendFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -10,6 +15,17 @@ import { randomBytes } from 'node:crypto';
 
 const FLO_HOME = process.env.FLO_HOME || join(homedir(), '.flo');
 const MEMORY_DIR = join(FLO_HOME, 'memory');
+
+function currentBackend(opts) {
+  const explicit = opts && opts.backend;
+  if (explicit) return explicit;
+  return process.env.FLO_MEMORY_BACKEND === 'agentdb' ? 'agentdb' : 'jsonl';
+}
+
+async function agentdb() {
+  // Lazy-load — only required when actually selecting agentdb backend
+  return await import('./memory-backend-agentdb.js');
+}
 
 function nsPath(ns) {
   return join(MEMORY_DIR, `${sanitizeNs(ns)}.jsonl`);
@@ -27,7 +43,12 @@ function newId() {
   return `${Date.now()}-${randomBytes(3).toString('hex')}`;
 }
 
-export async function storeEntry({ namespace = 'default', key, value, tags = [], metadata = {} }) {
+export async function storeEntry(input) {
+  if (currentBackend(input) === 'agentdb') return (await agentdb()).storeEntry(input);
+  return storeEntryJsonl(input);
+}
+
+async function storeEntryJsonl({ namespace = 'default', key, value, tags = [], metadata = {} }) {
   await ensureDir();
   const entry = {
     id: newId(),
@@ -43,7 +64,12 @@ export async function storeEntry({ namespace = 'default', key, value, tags = [],
   return entry;
 }
 
-export async function deleteEntry({ namespace = 'default', id }) {
+export async function deleteEntry(input) {
+  if (currentBackend(input) === 'agentdb') return (await agentdb()).deleteEntry(input);
+  return deleteEntryJsonl(input);
+}
+
+async function deleteEntryJsonl({ namespace = 'default', id }) {
   await ensureDir();
   const tomb = { id, namespace: sanitizeNs(namespace), deleted: true, deletedAt: new Date().toISOString() };
   await appendFile(nsPath(tomb.namespace), JSON.stringify(tomb) + '\n', 'utf8');
@@ -71,12 +97,16 @@ async function readAllEntries(namespace) {
   return [...live.values()].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
 
-export async function listEntries({ namespace = 'default', limit = 50 } = {}) {
+export async function listEntries(opts = {}) {
+  if (currentBackend(opts) === 'agentdb') return (await agentdb()).listEntries(opts);
+  const { namespace = 'default', limit = 50 } = opts;
   const entries = await readAllEntries(namespace);
   return entries.slice(0, limit);
 }
 
-export async function getEntry({ namespace = 'default', id, key }) {
+export async function getEntry(opts = {}) {
+  if (currentBackend(opts) === 'agentdb') return (await agentdb()).getEntry(opts);
+  const { namespace = 'default', id, key } = opts;
   const entries = await readAllEntries(namespace);
   if (id) return entries.find((e) => e.id === id) || null;
   if (key) return entries.find((e) => e.key === key) || null;
@@ -157,7 +187,12 @@ function bm25Score(queryTokens, doc, stats) {
   return score;
 }
 
-export async function searchEntries({ namespace, query, tags = [], limit = 20 }) {
+export async function searchEntries(opts = {}) {
+  if (currentBackend(opts) === 'agentdb') return (await agentdb()).searchEntries(opts);
+  return searchEntriesJsonl(opts);
+}
+
+async function searchEntriesJsonl({ namespace, query, tags = [], limit = 20 }) {
   const namespaces = namespace ? [namespace] : await listNamespaces();
   const queryTokens = tokenize(query);
   const wantTags = new Set(tags.map((t) => String(t).toLowerCase()));
@@ -191,7 +226,8 @@ export async function searchEntries({ namespace, query, tags = [], limit = 20 })
 // Exported for direct testing
 export const _searchInternals = { tokenize, stem, buildCorpusStats, bm25Score };
 
-export async function listNamespaces() {
+export async function listNamespaces(opts = {}) {
+  if (currentBackend(opts) === 'agentdb') return (await agentdb()).listNamespaces();
   await ensureDir();
   const entries = await readdir(MEMORY_DIR);
   return entries
@@ -199,7 +235,12 @@ export async function listNamespaces() {
     .map((f) => f.replace(/\.jsonl$/, ''));
 }
 
-export async function namespaceStats() {
+export async function namespaceStats(opts = {}) {
+  if (currentBackend(opts) === 'agentdb') return (await agentdb()).namespaceStats();
+  return namespaceStatsJsonl();
+}
+
+async function namespaceStatsJsonl() {
   const names = await listNamespaces();
   const out = [];
   for (const ns of names) {
