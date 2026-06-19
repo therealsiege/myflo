@@ -1,19 +1,17 @@
 # flo — local-first developer workbench
 
-Standalone CLI + MCP server. Zero build step. Pure ESM, Node ≥ 20.
+Standalone CLI + MCP server + Next.js dashboard. Zero build step on the CLI. Pure ESM, Node ≥ 20. No cloud dependencies.
 
-## Install (from the repo)
-
-```bash
-node apps/cli/bin/flo.js --help
-```
-
-Or link it globally:
+## Quick start
 
 ```bash
-cd apps/cli && npm link
-flo --help
+cd apps/cli && npm link              # makes `flo` available globally
+flo setup                            # creates ~/.flo/, registers MCP, runs doctor
+flo notes "First note with #flo"     # quick capture (BM25 search)
+cd ../../web && pnpm dev --port 3030 # localhost:3030 — unified dashboard
 ```
+
+`flo setup` is idempotent — safe to re-run. It creates `~/.flo/{memory,messages,logs}/`, initializes the inbox + terminal registries, and registers `flo` as an MCP server in `~/.claude/mcp.json` so Claude Code agents can call its tools.
 
 ## Commands
 
