@@ -1,14 +1,16 @@
 {
-  "name": "@myflo/cli",
-  "version": "0.1.0",
-  "description": "flo — local-first developer workbench. Standalone CLI for myflo.",
+  "name": "myflo",
+  "version": "1.0.0-rc.1",
+  "description": "myflo — local-first developer workbench. CLI + MCP server + Next.js dashboard. Forked from ruflo for the runtime substrate; flo CLI on top is ours.",
   "type": "module",
   "bin": {
-    "flo": "./bin/flo.js"
+    "flo": "./bin/flo.js",
+    "myflo": "./bin/flo.js"
   },
   "files": [
     "bin/**",
     "lib/**",
+    "tests/**",
     "README.md"
   ],
   "dependencies": {
@@ -17,6 +19,23 @@
   "engines": {
     "node": ">=20.0.0"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/therealsiege/myflo.git",
+    "directory": "apps/cli"
+  },
+  "keywords": [
+    "myflo",
+    "flo",
+    "claude-code",
+    "mcp",
+    "local-first",
+    "developer-tools",
+    "agentdb",
+    "memory",
+    "tasks",
+    "transcription"
+  ],
   "license": "MIT",
   "publishConfig": {
     "access": "public",
