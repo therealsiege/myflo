@@ -312,6 +312,42 @@ fi
 
 unset FLO_HOME
 
+# AgentDB backend: same operations should work with FLO_MEMORY_BACKEND=agentdb
+export FLO_HOME="$TMP/flo-agentdb"
+export FLO_MEMORY_BACKEND=agentdb
+if $FLO memory store --value "JWT auth via AgentDB" --namespace agentdb-test --tags auth >/dev/null 2>&1; then
+  echo "  PASS  memory store (agentdb backend)"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  memory store (agentdb backend)"
+  FAIL=$((FAIL+1))
+fi
+$FLO memory store --value "Stripe webhook handler" --namespace agentdb-test >/dev/null 2>&1 || true
+$FLO memory store --value "HS256 keys" --namespace agentdb-test >/dev/null 2>&1 || true
+if $FLO memory list --namespace agentdb-test --json | python3 -c 'import sys,json; d=json.load(sys.stdin); assert len(d)>=2' 2>/dev/null; then
+  echo "  PASS  memory list (agentdb backend)"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  memory list (agentdb backend)"
+  FAIL=$((FAIL+1))
+fi
+if $FLO memory search "JWT" --namespace agentdb-test --json 2>/dev/null \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); assert any("JWT" in e["value"] for e in d)' 2>/dev/null; then
+  echo "  PASS  memory search FTS5 (agentdb backend)"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  memory search FTS5 (agentdb backend)"
+  FAIL=$((FAIL+1))
+fi
+if $FLO memory namespaces --json | python3 -c 'import sys,json; d=json.load(sys.stdin); assert any(n["namespace"]=="agentdb-test" for n in d)' 2>/dev/null; then
+  echo "  PASS  memory namespaces (agentdb backend)"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  memory namespaces (agentdb backend)"
+  FAIL=$((FAIL+1))
+fi
+unset FLO_HOME FLO_MEMORY_BACKEND
+
 echo "--------------"
 echo "$PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then exit 1; fi

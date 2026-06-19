@@ -11,6 +11,9 @@
     "lib/**",
     "README.md"
   ],
+  "dependencies": {
+    "@myflo/memory": "workspace:*"
+  },
   "engines": {
     "node": ">=20.0.0"
   },
