@@ -3,7 +3,7 @@
 
 import { createInterface } from 'node:readline';
 import { readCheckpoints } from './sessions.js';
-import { readSwarmState } from './swarm.js';
+import { readSwarmState, recordVote, tallyVotes, listVotes } from './swarm.js';
 import {
   storeEntry,
   listEntries,
@@ -20,9 +20,15 @@ import {
   listTasks,
   taskCounts,
 } from './tasks-store.js';
+import {
+  spawnAgent,
+  listAgents,
+  getAgent,
+  agentHealth,
+} from './agents-store.js';
 
 const PROTOCOL_VERSION = '2024-11-05';
-const SERVER_INFO = { name: 'flo', version: '0.3.0' };
+const SERVER_INFO = { name: 'flo', version: '0.4.0' };
 
 const TOOLS = [
   {
@@ -176,6 +182,69 @@ const TOOLS = [
     description: 'Get counts of flo tasks by status.',
     inputSchema: { type: 'object', properties: {} },
   },
+  {
+    name: 'flo_agent_spawn',
+    description: 'Register a named agent in flo (~/.flo/agents.jsonl). Does NOT spawn a process — Claude Code\'s Task tool does that. This is a coordination record so multiple agents can discover each other.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: { type: 'string', description: 'Agent type (e.g. coder, tester, reviewer)' },
+        name: { type: 'string' },
+        role: { type: 'string' },
+        tags: { type: 'array', items: { type: 'string' } },
+        parent: { type: 'string', description: 'Parent agent id' },
+      },
+      required: ['type'],
+    },
+  },
+  {
+    name: 'flo_agent_list',
+    description: 'List registered flo agents with optional filters.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['idle', 'busy', 'completed', 'failed', 'stopped'] },
+        type: { type: 'string' },
+      },
+    },
+  },
+  {
+    name: 'flo_agent_status',
+    description: 'Get a single agent by id.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'flo_agent_health',
+    description: 'Heartbeat-age health view of all live (non-stopped) agents.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'flo_swarm_vote',
+    description: 'Record a weighted vote on a proposal in .swarm/consensus.jsonl. Last vote per voter wins on tally.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        proposal: { type: 'string' },
+        voter: { type: 'string' },
+        vote: { type: 'string', description: 'yes / no / abstain / any string' },
+        weight: { type: 'number' },
+      },
+      required: ['proposal', 'voter'],
+    },
+  },
+  {
+    name: 'flo_swarm_tally',
+    description: 'Tally weighted votes on a proposal. Returns total voters, total weight, and per-vote weight.',
+    inputSchema: {
+      type: 'object',
+      properties: { proposal: { type: 'string' } },
+      required: ['proposal'],
+    },
+  },
 ];
 
 export async function mcpServe() {
@@ -323,6 +392,35 @@ async function callTool({ name, arguments: args = {} }) {
     case 'flo_tasks_counts': {
       const counts = await taskCounts();
       return textResult(JSON.stringify(counts, null, 2));
+    }
+    case 'flo_agent_spawn': {
+      if (!args.type) throw new Error('flo_agent_spawn: type is required');
+      const agent = await spawnAgent(args);
+      return textResult(JSON.stringify(agent, null, 2));
+    }
+    case 'flo_agent_list': {
+      const agents = await listAgents({ status: args.status, type: args.type });
+      return textResult(JSON.stringify(agents, null, 2));
+    }
+    case 'flo_agent_status': {
+      if (!args.id) throw new Error('flo_agent_status: id is required');
+      const agent = await getAgent(args.id);
+      return textResult(JSON.stringify(agent, null, 2));
+    }
+    case 'flo_agent_health': {
+      const health = await agentHealth();
+      return textResult(JSON.stringify(health, null, 2));
+    }
+    case 'flo_swarm_vote': {
+      if (!args.proposal) throw new Error('flo_swarm_vote: proposal is required');
+      if (!args.voter) throw new Error('flo_swarm_vote: voter is required');
+      const event = await recordVote(args);
+      return textResult(JSON.stringify(event, null, 2));
+    }
+    case 'flo_swarm_tally': {
+      if (!args.proposal) throw new Error('flo_swarm_tally: proposal is required');
+      const result = await tallyVotes({ proposal: args.proposal });
+      return textResult(JSON.stringify(result, null, 2));
     }
     default:
       throw new Error(`unknown tool: ${name}`);

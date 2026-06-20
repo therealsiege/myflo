@@ -348,6 +348,45 @@ else
 fi
 unset FLO_HOME FLO_MEMORY_BACKEND
 
+# Agents: spawn / list / update / health
+export FLO_HOME="$TMP/flo-agents"
+AGENT_ID=$($FLO agents spawn coder --name builder --tags impl --json 2>/dev/null \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])' 2>/dev/null)
+if [ -n "$AGENT_ID" ]; then echo "  PASS  agents spawn (id=$AGENT_ID)"; PASS=$((PASS+1))
+else echo "  FAIL  agents spawn"; FAIL=$((FAIL+1)); fi
+if $FLO agents list --json | python3 -c "import sys,json; d=json.load(sys.stdin); assert any(a['id']=='$AGENT_ID' for a in d)" 2>/dev/null; then
+  echo "  PASS  agents list"; PASS=$((PASS+1))
+else echo "  FAIL  agents list"; FAIL=$((FAIL+1)); fi
+if [ -n "$AGENT_ID" ] && $FLO agents update "$AGENT_ID" --status busy >/dev/null 2>&1; then
+  if $FLO agents list --status busy --json | python3 -c "import sys,json; d=json.load(sys.stdin); assert any(a['id']=='$AGENT_ID' for a in d)" 2>/dev/null; then
+    echo "  PASS  agents update (status transition)"; PASS=$((PASS+1))
+  else echo "  FAIL  agents update visibility"; FAIL=$((FAIL+1)); fi
+else echo "  FAIL  agents update command"; FAIL=$((FAIL+1)); fi
+if $FLO agents health --json | python3 -c 'import sys,json; d=json.load(sys.stdin); assert any(h["health"]=="healthy" for h in d)' 2>/dev/null; then
+  echo "  PASS  agents health"; PASS=$((PASS+1))
+else echo "  FAIL  agents health"; FAIL=$((FAIL+1)); fi
+unset FLO_HOME
+
+# Swarm vote: record + tally in an isolated temp swarm dir
+mkdir -p "$TMP/swarm-vote-test"
+(cd "$TMP/swarm-vote-test" && $FLO swarm vote use-flo --voter alice --vote yes >/dev/null 2>&1 \
+  && $FLO swarm vote use-flo --voter bob --vote yes --weight 2 >/dev/null 2>&1 \
+  && $FLO swarm vote use-flo --voter carol --vote no >/dev/null 2>&1)
+TALLY=$(cd "$TMP/swarm-vote-test" && $FLO swarm tally use-flo --json 2>/dev/null)
+if echo "$TALLY" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["totalVoters"]==3 and d["tally"]["yes"]==3 and d["tally"]["no"]==1' 2>/dev/null; then
+  echo "  PASS  swarm vote + tally"; PASS=$((PASS+1))
+else echo "  FAIL  swarm vote + tally (got $TALLY)"; FAIL=$((FAIL+1)); fi
+
+# MCP tools/list should now report 22 tools (16 + 6 new)
+TOOLCOUNT=$(printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n' \
+  | $FLO mcp start 2>/dev/null | python3 -c 'import sys,json
+for line in sys.stdin:
+    if not line.strip(): continue
+    m = json.loads(line)
+    if m.get("id") == 2: print(len(m["result"]["tools"]))' 2>/dev/null)
+if [ "$TOOLCOUNT" = "22" ]; then echo "  PASS  mcp tools/list count (22)"; PASS=$((PASS+1))
+else echo "  FAIL  mcp tools/list count (got $TOOLCOUNT)"; FAIL=$((FAIL+1)); fi
+
 echo "--------------"
 echo "$PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then exit 1; fi
