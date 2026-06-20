@@ -8,6 +8,8 @@ import { mcpServe } from './mcp-server.js';
 import { transcribeCommand } from './transcribe-cmd.js';
 import { swarmCommand } from './swarm.js';
 import { agentsCommand } from './agents-cmd.js';
+import { hookCommand } from './hook-cmd.js';
+import { replaceCommand } from './replace-ruflo.js';
 import { memoryCommand } from './memory-cmd.js';
 import { messagesCommand } from './messages.js';
 import { transcriptsCommand } from './transcripts.js';
@@ -50,6 +52,8 @@ const COMMANDS = {
   completions: completionsCommand,
   edit: editCommand,
   agents: agentsCommand,
+  hook: hookCommand,
+  replace: replaceCommand,
 };
 
 export async function run(argv) {
