@@ -1,0 +1,60 @@
+name: npm publish
+
+# Publishes apps/cli (myflo) to npm when a v* tag is pushed.
+# Requires a repo secret named NPM_TOKEN — create at
+# https://www.npmjs.com/settings/<your-user>/tokens/new (granular, publish).
+# Add to repo: gh secret set NPM_TOKEN -b'<token>' --repo therealsiege/myflo
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run npm publish --dry-run only'
+        required: false
+        default: 'false'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Install (resolves workspace deps before pack)
+        run: pnpm install --frozen-lockfile
+
+      - name: Smoke test (must pass before publish)
+        run: bash apps/cli/tests/smoke.sh
+
+      - name: Dry-run pack
+        if: github.event.inputs.dry_run == 'true' || github.event_name == 'workflow_dispatch'
+        run: cd apps/cli && npm pack --dry-run
+
+      - name: Publish to npm
+        if: github.event_name == 'push' && github.event.inputs.dry_run != 'true'
+        run: cd apps/cli && npm publish --access public --tag latest
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify publish
+        if: github.event_name == 'push' && github.event.inputs.dry_run != 'true'
+        run: |
+          sleep 15
+          VERSION=$(jq -r .version apps/cli/package.json)
+          echo "Verifying myflo@$VERSION on npm..."
+          PUBLISHED=$(npm view "myflo@$VERSION" version 2>&1 || echo "")
+          if [ -z "$PUBLISHED" ]; then
+            echo "::error::myflo@$VERSION not found on npm"
+            exit 1
+          fi
+          echo "myflo@$VERSION published successfully"
