@@ -4,14 +4,18 @@ on:
   pull_request:
     paths:
       - 'apps/cli/**'
+      - 'packages/@myflo/**'
       - 'web/src/lib/flo.ts'
       - 'web/src/app/api/flo/**'
       - 'web/src/app/{swarm,sessions,capabilities,inbox,memory,transcripts}/**'
       - '.github/workflows/flo-smoke.yml'
+      - 'pnpm-workspace.yaml'
+      - 'pnpm-lock.yaml'
   push:
     branches: [main]
     paths:
       - 'apps/cli/**'
+      - 'packages/@myflo/**'
 
 jobs:
   smoke:
@@ -26,6 +30,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+      - name: pnpm install (resolves workspace links)
+        run: pnpm install --frozen-lockfile
+      - name: Build @myflo/memory
+        run: cd packages/@myflo/memory && pnpm build
       - name: Run smoke test
         run: bash apps/cli/tests/smoke.sh
       - name: Show flo --help on failure
