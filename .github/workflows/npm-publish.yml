@@ -53,11 +53,12 @@ jobs:
         if: github.event_name == 'push' && github.event.inputs.dry_run != 'true'
         run: |
           sleep 15
+          NAME=$(jq -r .name apps/cli/package.json)
           VERSION=$(jq -r .version apps/cli/package.json)
-          echo "Verifying myflo@$VERSION on npm..."
-          PUBLISHED=$(npm view "myflo@$VERSION" version 2>&1 || echo "")
+          echo "Verifying $NAME@$VERSION on npm..."
+          PUBLISHED=$(npm view "$NAME@$VERSION" version 2>&1 || echo "")
           if [ -z "$PUBLISHED" ]; then
-            echo "::error::myflo@$VERSION not found on npm"
+            echo "::error::$NAME@$VERSION not found on npm"
             exit 1
           fi
-          echo "myflo@$VERSION published successfully"
+          echo "$NAME@$VERSION published successfully"

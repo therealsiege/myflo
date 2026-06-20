@@ -1,6 +1,6 @@
 {
-  "name": "myflo",
-  "version": "1.0.0-rc.2",
+  "name": "@therealsiege/myflo",
+  "version": "1.0.0-rc.3",
   "description": "myflo — local-first developer workbench. CLI + MCP server + Next.js dashboard. Forked from ruflo for the runtime substrate; flo CLI on top is ours.",
   "type": "module",
   "bin": {
