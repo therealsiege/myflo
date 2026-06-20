@@ -101,3 +101,4 @@ Exercises every command end-to-end against an ephemeral temp directory.
 - ✅ Memory: file-backed JSON store in `~/.flo/memory/` (substring + tag search, no vectors yet).
 - ✅ Bridge: inbox `.md` drops with `to:` frontmatter write a mailbox file + memory entry — eagent-style cross-process comms.
 - 🟡 v3 fork: 3 of ~25 packages copied with renamed manifests; rest still under `v3/@claude-flow/`.
+
