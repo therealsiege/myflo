@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>myflo — local-first developer workbench for Claude Code</title>
+  <meta name="description" content="Capture, recall, organize. Memory + tasks + audio transcripts + inbox watchers + macOS launchd installer. 22 MCP tools for Claude Code. No cloud." />
+  <meta property="og:title" content="myflo — local-first developer workbench" />
+  <meta property="og:description" content="Capture, recall, organize. Built on disk under ~/.flo/. 22 MCP tools for Claude Code agents. No cloud." />
+  <meta property="og:url" content="https://myflo.dev" />
+  <meta property="og:type" content="website" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext x='0' y='28' font-family='ui-monospace,monospace' font-size='28' font-weight='600' fill='%23f5f5f4'%3Eflo%3C/text%3E%3C/svg%3E" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --bg: #0c0a09;
+      --panel: rgba(28, 25, 23, 0.4);
+      --border: rgba(68, 64, 60, 0.6);
+      --fg: #f5f5f4;
+      --fg-muted: #d6d3d1;
+      --fg-dim: #a8a29e;
+      --fg-dimmer: #78716c;
+      --fg-dimmest: #57534e;
+      --code-bg: #0c0a09;
+      --code-border: #292524;
+    }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    .mono, code, pre { font-family: ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Mono", Consolas, monospace; }
+    a { color: inherit; text-decoration: none; transition: color 0.15s; }
+    a:hover { color: var(--fg); }
+    h1, h2, h3, h4 { margin: 0; font-weight: 500; letter-spacing: -0.015em; }
+    p, ul { margin: 0; }
+    pre { margin: 0; }
+
+    .container { max-width: 1024px; margin: 0 auto; padding: 0 1.5rem; }
+    .row { display: flex; align-items: center; justify-content: space-between; }
+
+    header { border-bottom: 1px solid var(--border); }
+    header .container { padding-top: 1rem; padding-bottom: 1rem; }
+    header nav { display: flex; gap: 1.25rem; font-size: 0.875rem; color: var(--fg-dim); }
+    header nav a:hover { color: var(--fg); }
+    .brand { font-size: 0.875rem; font-weight: 600; letter-spacing: -0.02em; }
+
+    section { border-top: 1px solid var(--border); }
+    section:first-of-type { border-top: 0; }
+    .section-inner { padding: 4rem 0; }
+
+    .hero { background: radial-gradient(circle at 30% 0%, rgba(120,113,108,0.15), transparent 50%); }
+    .hero .section-inner { padding: 4rem 0 3rem; }
+    @media (min-width: 768px) { .hero .section-inner { padding: 6rem 0 4rem; } }
+    .eyebrow {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.22em;
+      color: var(--fg-dimmer);
+      margin-bottom: 1rem;
+    }
+    .hero h1 { font-size: 2.5rem; line-height: 1.1; }
+    @media (min-width: 768px) { .hero h1 { font-size: 4rem; } }
+    .hero h1 .muted { color: var(--fg-dim); }
+    .hero p.lede {
+      margin-top: 1.5rem;
+      max-width: 42rem;
+      font-size: 1.125rem;
+      color: var(--fg-muted);
+      line-height: 1.6;
+    }
+    .hero p.lede .accent { color: var(--fg); }
+
+    .hero .cta { margin-top: 2rem; display: flex; flex-direction: column; gap: 0.75rem; }
+    @media (min-width: 640px) { .hero .cta { flex-direction: row; } }
+    .install-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1rem;
+      background: #1c1917;
+      border: 1px solid var(--code-border);
+      border-radius: 6px;
+      font-size: 0.875rem;
+    }
+    .install-pill .prompt { color: var(--fg-dimmer); }
+    .btn-ghost {
+      padding: 0.75rem 1rem;
+      border-radius: 6px;
+      border: 1px solid #44403c;
+      font-size: 0.875rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--fg);
+    }
+    .btn-ghost:hover { border-color: #78716c; }
+    .meta { margin-top: 0.75rem; font-size: 0.75rem; color: var(--fg-dimmer); }
+
+    h2.section-h { font-size: 1.5rem; }
+    @media (min-width: 768px) { h2.section-h { font-size: 1.875rem; } }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+    @media (min-width: 768px) { .grid-2 { grid-template-columns: repeat(2, 1fr); } }
+    .card {
+      border: 1px solid #292524;
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 1.25rem;
+    }
+    .card .tag {
+      font-size: 0.75rem;
+      color: var(--fg-dimmer);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    .card h4 { margin-top: 0.25rem; font-size: 1.125rem; }
+    .card p { margin-top: 0.5rem; font-size: 0.875rem; color: var(--fg-dim); line-height: 1.6; }
+    pre.code {
+      margin-top: 0.75rem;
+      font-size: 0.75rem;
+      background: var(--code-bg);
+      border: 1px solid var(--code-border);
+      border-radius: 4px;
+      padding: 0.75rem;
+      color: var(--fg-muted);
+      overflow-x: auto;
+      white-space: pre;
+    }
+    pre.code-lg { font-size: 0.875rem; padding: 1rem; }
+
+    .patterns { display: flex; flex-direction: column; gap: 2rem; }
+    .pattern { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+    @media (min-width: 768px) { .pattern { grid-template-columns: 160px 1fr; } }
+    .pattern .label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--fg-dimmer);
+      padding-top: 0.25rem;
+    }
+    .pattern p { color: var(--fg-muted); line-height: 1.6; }
+    .pattern .accent { color: var(--fg); }
+
+    .install-step + .install-step { margin-top: 1.5rem; }
+    .step-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--fg-dimmer);
+      margin-bottom: 0.5rem;
+    }
+    .help { margin-top: 2rem; font-size: 0.875rem; color: var(--fg-dimmer); }
+
+    .scope-list {
+      list-style: none;
+      padding: 0;
+      max-width: 48rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      color: var(--fg-muted);
+      line-height: 1.6;
+    }
+    .scope-list li { display: flex; gap: 0.75rem; }
+    .scope-list .bullet { color: var(--fg-dimmest); }
+    .scope-section { background: rgba(28, 25, 23, 0.3); }
+
+    p.lead-text { color: var(--fg-muted); line-height: 1.6; max-width: 48rem; margin-bottom: 1.5rem; }
+    p.lead-text a { color: var(--fg); text-decoration: underline; text-decoration-color: #57534e; }
+    p.lead-text a:hover { text-decoration-color: #d6d3d1; }
+
+    footer { border-top: 1px solid var(--border); font-size: 0.875rem; }
+    footer .container {
+      padding-top: 2.5rem;
+      padding-bottom: 2.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    @media (min-width: 768px) {
+      footer .container { flex-direction: row; align-items: center; justify-content: space-between; }
+    }
+    footer .version { color: var(--fg-muted); }
+    footer .legal { margin-top: 0.25rem; color: var(--fg-dimmer); }
+    footer .links { display: flex; gap: 1.25rem; color: var(--fg-dim); }
+    footer .links a:hover { color: var(--fg); }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="container row">
+      <div class="brand mono">myflo</div>
+      <nav>
+        <a href="#what">what</a>
+        <a href="#install">install</a>
+        <a href="#cutover">cutover</a>
+        <a href="https://github.com/therealsiege/myflo">github</a>
+        <a href="https://www.npmjs.com/package/@fuzeelogik/myflo">npm</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="container section-inner">
+      <p class="eyebrow mono">local-first workbench · for claude code</p>
+      <h1>Capture, recall,<br /><span class="muted">organize.</span></h1>
+      <p class="lede">
+        Everything lives on disk under <span class="mono accent">~/.flo/</span>. Notes, tasks, transcripts, inbox handlers, memory with FTS5/BM25 search, macOS launchd installers, 22 MCP tools exposed to Claude Code agents. No cloud. No API keys.
+      </p>
+      <div class="cta">
+        <code class="install-pill mono">
+          <span class="prompt">$</span><span>npx @fuzeelogik/myflo setup</span>
+        </code>
+        <a href="https://github.com/therealsiege/myflo" class="btn-ghost">view on github →</a>
+      </div>
+      <p class="meta">macOS · Linux · Node ≥ 20 · MIT</p>
+    </div>
+  </section>
+
+  <section id="what">
+    <div class="container section-inner">
+      <h2 class="eyebrow mono">what you get</h2>
+      <h2 class="section-h" style="margin-bottom:2.5rem;">Twelve concrete tools, one consistent shape.</h2>
+
+      <div class="grid-2">
+        <article class="card">
+          <div class="tag mono">capture</div>
+          <h4>flo notes · flo memory · flo tasks</h4>
+          <p>Quick capture that survives Claude Code sessions. Append-only JSONL with tombstones. BM25 search out of the box; AgentDB + FTS5 if you opt in.</p>
+          <pre class="code">flo notes "JWT refresh tokens with 1hr expiry #auth"
+flo memory search "jwt"
+flo tasks create "Wire up the auth flow"</pre>
+        </article>
+
+        <article class="card">
+          <div class="tag mono">audio</div>
+          <h4>flo transcribe · inbox handler</h4>
+          <p>Drop an <span class="mono">.m4a</span> into a watched folder, get a sidecar <span class="mono">.txt</span> transcript next to it. Auto-detects whisper / mlx-whisper / whisper-cpp. No cloud.</p>
+          <pre class="code">flo inbox add ~/voice-memos --slug memos
+flo inbox install memos          # macOS launchd, runs every 30s
+# drop voice.m4a → voice.m4a.txt appears</pre>
+        </article>
+
+        <article class="card">
+          <div class="tag mono">recall</div>
+          <h4>flo guidance audit · activity</h4>
+          <p>Find duplicates across <span class="mono">~/.claude/{skills,commands,agents}/</span>. See a chronological timeline of everything you did across every subsystem.</p>
+          <pre class="code">flo guidance audit --out ~/Desktop/audit.md
+flo activity list --since 7d --type task</pre>
+        </article>
+
+        <article class="card">
+          <div class="tag mono">coordinate</div>
+          <h4>flo agents · flo swarm · flo session</h4>
+          <p>Named-agent registry for multi-agent flows. Weighted voting on proposals. Ghostty/iTerm window restore after reboot (the a-team pattern).</p>
+          <pre class="code">flo session terminal-add work --cwd ~/projects/api --app ghostty
+flo session terminal-restore --all
+flo swarm vote use-jwt --voter alice --vote yes
+flo swarm tally use-jwt</pre>
+        </article>
+
+        <article class="card">
+          <div class="tag mono">mcp</div>
+          <h4>22 tools for Claude Code agents</h4>
+          <p>Once registered, every agent in your Claude Code session can call <span class="mono">flo_memory_search</span>, <span class="mono">flo_tasks_create</span>, <span class="mono">flo_agent_spawn</span>, <span class="mono">flo_transcribe</span>, and 18 more.</p>
+          <pre class="code">flo migrate    # adds flo to ~/.claude/mcp.json
+# restart Claude Code → tools appear</pre>
+        </article>
+
+        <article class="card">
+          <div class="tag mono">dashboard</div>
+          <h4>localhost web UI</h4>
+          <p>Nine panels: overview, activity timeline, swarm, memory, tasks, sessions, capabilities, inbox, transcripts. Server-side rendered. Subprocesses the flo CLI for every data fetch.</p>
+          <pre class="code">cd web && pnpm dev --port 3030
+open http://localhost:3030</pre>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="container section-inner">
+      <h2 class="eyebrow mono">how to use it</h2>
+      <h2 class="section-h" style="margin-bottom:2.5rem;">Three daily-driver patterns.</h2>
+
+      <div class="patterns">
+        <div class="pattern">
+          <div class="label mono">daily capture</div>
+          <div>
+            <p>Quick thoughts go to <span class="mono accent">flo notes</span> with <span class="mono accent">#hashtags</span>. Tasks that should survive the session go to <span class="mono accent">flo tasks</span>. Both feed the same activity timeline.</p>
+            <pre class="code" style="margin-top:0.75rem;">flo notes "Hash routing fails on trailing slash #bug"
+flo tasks create "Add e2e test for trailing-slash redirect" --tags bug,routing
+# tomorrow:
+flo memory search "trailing slash" --namespace notes
+flo tasks list --status pending --tag bug</pre>
+          </div>
+        </div>
+
+        <div class="pattern">
+          <div class="label mono">voice → memory</div>
+          <div>
+            <p>Record a voice memo on your phone, drop the file in a watched folder. Transcript ends up next to the audio and indexed in flo memory under the <span class="mono accent">meetings</span> namespace.</p>
+            <pre class="code" style="margin-top:0.75rem;">flo inbox add ~/voice-memos --slug memos
+flo inbox install memos                  # macOS: runs every 30s
+# … drop voice-2024-08-14.m4a in ~/voice-memos
+# … 30s later: voice-2024-08-14.m4a.txt exists
+flo memory search "client decision" --namespace meetings</pre>
+          </div>
+        </div>
+
+        <div class="pattern">
+          <div class="label mono">weekly review</div>
+          <div>
+            <p>Friday afternoon: what did I actually do this week? <span class="mono accent">flo activity</span> aggregates tasks, notes, memory, transcripts, terminal sessions, and Claude Code checkpoints into one timeline.</p>
+            <pre class="code" style="margin-top:0.75rem;">flo activity list --since 7d
+# or open the web UI:
+cd web && pnpm dev --port 3030  # then visit /activity</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="container section-inner">
+      <h2 class="eyebrow mono">install</h2>
+      <h2 class="section-h" style="margin-bottom:2.5rem;">Two commands.</h2>
+
+      <div class="install-step">
+        <div class="step-label mono">1 · install</div>
+        <pre class="code code-lg"># global install (recommended)
+npm install -g @fuzeelogik/myflo
+
+# or one-shot via npx
+npx @fuzeelogik/myflo setup</pre>
+      </div>
+
+      <div class="install-step">
+        <div class="step-label mono">2 · setup</div>
+        <pre class="code code-lg">flo setup
+# creates ~/.flo/{memory,messages,logs}/
+# initializes ~/.flo/{inboxes,terminals}.json
+# registers flo as an MCP server in ~/.claude/mcp.json
+# runs flo doctor</pre>
+      </div>
+
+      <div class="install-step">
+        <div class="step-label mono">3 · go</div>
+        <pre class="code code-lg">flo --help                          # 27 commands
+flo notes "First note #flo"
+flo tasks create "Try the web UI"
+# (restart Claude Code to pick up the new MCP tools)</pre>
+      </div>
+
+      <p class="help">Requires Node ≥ 20. macOS for the launchd installer; everything else cross-platform. The audio transcriber uses whatever's on your PATH (mlx-whisper, openai-whisper, or whisper.cpp).</p>
+    </div>
+  </section>
+
+  <section id="cutover">
+    <div class="container section-inner">
+      <h2 class="eyebrow mono">migrating from ruflo</h2>
+      <h2 class="section-h" style="margin-bottom:1.5rem;">Two commands, both backed up first.</h2>
+      <p class="lead-text">
+        myflo started as a fork of <a href="https://github.com/ruvnet/claude-flow">ruflo</a> for the runtime substrate. The flo CLI on top is ours: focused on capture / recall / coordination, not enterprise multi-agent orchestration. If you're running ruflo today, the cutover is additive then subtractive:
+      </p>
+      <pre class="code code-lg">flo migrate          # adds 'flo' to ~/.claude/mcp.json (idempotent, doesn't touch ruflo)
+flo replace ruflo    # removes ruflo entries from settings.json + ~/.claude/mcp.json
+                     # backs up to .flo-bak.&lt;timestamp&gt; first
+# restart Claude Code → only flo's MCP tools are loaded</pre>
+      <p class="help">Rollback: <span class="mono" style="color:var(--fg-muted);">cp .claude/settings.json.flo-bak.* .claude/settings.json</span></p>
+    </div>
+  </section>
+
+  <section class="scope-section">
+    <div class="container section-inner">
+      <h2 class="eyebrow mono">honest scope</h2>
+      <h2 class="section-h" style="margin-bottom:1.5rem;">What myflo is not.</h2>
+      <ul class="scope-list">
+        <li><span class="mono bullet">·</span> Not an agent orchestrator. Claude Code's Task tool spawns work; <span class="mono">flo agents</span> just records coordination state.</li>
+        <li><span class="mono bullet">·</span> Not a swarm runtime. <span class="mono">flo swarm status</span> reads <span class="mono">.swarm/state.json</span>; <span class="mono">flo swarm vote</span> tallies consensus. No Byzantine consensus or hive-mind here.</li>
+        <li><span class="mono bullet">·</span> Not a cloud service. Everything is local files. No telemetry. No API keys to manage.</li>
+        <li><span class="mono bullet">·</span> Not a replacement for git. Memory + tasks are append-only logs, not version control.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container">
+      <div>
+        <div class="version mono">myflo · 1.0.0-rc.4</div>
+        <p class="legal">MIT. Forked from <a href="https://github.com/ruvnet/claude-flow">ruflo</a> (also MIT) by <a href="https://github.com/ruvnet">@ruvnet</a>.</p>
+      </div>
+      <div class="links">
+        <a href="https://github.com/therealsiege/myflo">github</a>
+        <a href="https://www.npmjs.com/package/@fuzeelogik/myflo">npm</a>
+        <a href="https://github.com/therealsiege/myflo/issues">issues</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
