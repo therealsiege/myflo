@@ -13,7 +13,8 @@
     "tests/**",
     "README.md"
   ],
-  "dependencies": {
+  "dependencies": {},
+  "optionalDependencies": {
     "@myflo/memory": "workspace:*"
   },
   "engines": {

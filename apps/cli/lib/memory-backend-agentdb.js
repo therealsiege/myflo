@@ -39,8 +39,21 @@ async function getBackend() {
   if (_backend) return _backend;
   if (!existsSync(FLO_HOME)) await mkdir(FLO_HOME, { recursive: true });
   // Dynamic import keeps the heavy module out of the load path for the JSONL
-  // codepath. Only required when AgentDB is actually being used.
-  const { SqlJsBackend } = await import('@myflo/memory');
+  // codepath. @myflo/memory is an optionalDependency — when missing (e.g. a
+  // bare `npm install myflo` without the optional extras), throw a clear error
+  // so the caller knows to either install the optional dep or stick with the
+  // jsonl backend.
+  let SqlJsBackend;
+  try {
+    ({ SqlJsBackend } = await import('@myflo/memory'));
+  } catch (err) {
+    throw new Error(
+      `agentdb backend requires @myflo/memory (optional dependency). ` +
+      `Install it: npm i @myflo/memory. ` +
+      `Or stick with the default jsonl backend (unset FLO_MEMORY_BACKEND). ` +
+      `Underlying error: ${err.message}`
+    );
+  }
   const wasmPath = await locateSqlJsWasm();
   // autoPersistInterval: 0 disables the setInterval that holds the Node event
   // loop open. We persist explicitly after each write so a one-shot CLI invocation
