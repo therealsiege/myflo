@@ -1,6 +1,6 @@
 {
   "name": "@fuzeelogik/myflo",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "myflo — local-first developer workbench. CLI + MCP server + Next.js dashboard. Forked from ruflo for the runtime substrate; flo CLI on top is ours.",
   "type": "module",
   "bin": {
@@ -14,9 +14,6 @@
     "README.md"
   ],
   "dependencies": {},
-  "optionalDependencies": {
-    "@myflo/memory": "workspace:*"
-  },
   "engines": {
     "node": ">=20.0.0"
   },

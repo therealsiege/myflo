@@ -39,18 +39,18 @@ async function getBackend() {
   if (_backend) return _backend;
   if (!existsSync(FLO_HOME)) await mkdir(FLO_HOME, { recursive: true });
   // Dynamic import keeps the heavy module out of the load path for the JSONL
-  // codepath. @myflo/memory is an optionalDependency — when missing (e.g. a
-  // bare `npm install myflo` without the optional extras), throw a clear error
-  // so the caller knows to either install the optional dep or stick with the
-  // jsonl backend.
+  // codepath. @myflo/memory is not yet published to npm — the agentdb backend
+  // only works when myflo is run from the monorepo (pnpm workspace resolves
+  // the package locally). For standalone `npx @fuzeelogik/myflo` installs,
+  // stick with the default jsonl backend.
   let SqlJsBackend;
   try {
     ({ SqlJsBackend } = await import('@myflo/memory'));
   } catch (err) {
     throw new Error(
-      `agentdb backend requires @myflo/memory (optional dependency). ` +
-      `Install it: npm i @myflo/memory. ` +
-      `Or stick with the default jsonl backend (unset FLO_MEMORY_BACKEND). ` +
+      `agentdb backend requires @myflo/memory, which is not yet published to npm. ` +
+      `It currently resolves only inside the myflo monorepo. ` +
+      `Stick with the default jsonl backend (unset FLO_MEMORY_BACKEND). ` +
       `Underlying error: ${err.message}`
     );
   }

@@ -39,6 +39,18 @@ jobs:
       - name: Smoke test (must pass before publish)
         run: bash apps/cli/tests/smoke.sh
 
+      - name: Guard against workspace:* protocol in published package
+        # npm publish does NOT rewrite `workspace:*` to real versions (pnpm publish does).
+        # If any dep in apps/cli/package.json still uses workspace:* at publish time,
+        # `npx <package>` will fail with EUNSUPPORTEDPROTOCOL for end users.
+        # Fail loudly here so a regression can't ship.
+        run: |
+          if grep -E '"workspace:' apps/cli/package.json; then
+            echo "::error::apps/cli/package.json contains workspace:* deps — will break standalone install. Either publish the workspace package to npm and pin a real version, or remove the dep."
+            exit 1
+          fi
+          echo "✓ no workspace:* protocol in apps/cli/package.json"
+
       - name: Dry-run pack
         if: github.event.inputs.dry_run == 'true' || github.event_name == 'workflow_dispatch'
         run: cd apps/cli && npm pack --dry-run
