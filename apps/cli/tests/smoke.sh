@@ -431,6 +431,40 @@ if CLAUDE_FILE_PATHS="db/schema.sql" $FLO hook post-edit >/dev/null 2>&1; then
 else echo "  FAIL  auto-adr hook command"; FAIL=$((FAIL+1)); fi
 unset FLO_HOME
 
+# Daemon: workers list shows 11 entries (3 real + 8 stubs)
+export FLO_HOME="$TMP/daemon-list-home"
+if $FLO daemon workers list --json 2>/dev/null \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); assert len(d)==11, f'got {len(d)}'; real=[w for w in d if not w['stub']]; assert len(real)==3, f'got {len(real)} real'; assert {w['name'] for w in real}=={'audit','document','testgaps'}" 2>/dev/null; then
+  echo "  PASS  daemon workers list (3 real + 8 stubs)"; PASS=$((PASS+1))
+else echo "  FAIL  daemon workers list"; FAIL=$((FAIL+1)); fi
+unset FLO_HOME
+
+# Daemon: trigger testgaps in an isolated tiny project, expect ok
+export FLO_HOME="$TMP/daemon-trigger-home"
+DAEMON_PROJ="$TMP/daemon-proj"
+mkdir -p "$DAEMON_PROJ/src" "$DAEMON_PROJ/tests"
+printf 'export function add(a,b){return a+b;}\n' > "$DAEMON_PROJ/src/math.js"
+printf 'import {add} from "../src/math.js";\n' > "$DAEMON_PROJ/tests/math.test.js"
+if (cd "$DAEMON_PROJ" && $FLO daemon trigger testgaps >/dev/null 2>&1); then
+  if $FLO daemon status --json 2>/dev/null \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); r=d['workers']['testgaps']['lastResult']; assert r['ok']==True; assert r['gapCount']==0, f'gapCount={r[\"gapCount\"]}'" 2>/dev/null; then
+    echo "  PASS  daemon trigger testgaps (math.js covered → 0 gaps)"; PASS=$((PASS+1))
+  else echo "  FAIL  daemon trigger testgaps result"; FAIL=$((FAIL+1)); fi
+else echo "  FAIL  daemon trigger testgaps command"; FAIL=$((FAIL+1)); fi
+unset FLO_HOME
+
+# Daemon: enable/disable round-trip
+export FLO_HOME="$TMP/daemon-toggle-home"
+if $FLO daemon workers enable optimize >/dev/null 2>&1 \
+  && $FLO daemon workers list --json 2>/dev/null \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); o=next(w for w in d if w['name']=='optimize'); assert o['enabled']==True" 2>/dev/null \
+  && $FLO daemon workers disable optimize >/dev/null 2>&1 \
+  && $FLO daemon workers list --json 2>/dev/null \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); o=next(w for w in d if w['name']=='optimize'); assert o['enabled']==False" 2>/dev/null; then
+  echo "  PASS  daemon workers enable/disable round-trip"; PASS=$((PASS+1))
+else echo "  FAIL  daemon workers enable/disable"; FAIL=$((FAIL+1)); fi
+unset FLO_HOME
+
 # Auto-security: secret-pattern detection in a leaky file
 export FLO_HOME="$TMP/sec-home"
 SEC_PROJ="$TMP/sec-proj"

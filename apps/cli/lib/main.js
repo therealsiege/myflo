@@ -24,6 +24,7 @@ import { completionsCommand } from './completions.js';
 import { editCommand } from './edit-cmd.js';
 import { adrCommand } from './auto-adr.js';
 import { securityCommand } from './auto-security.js';
+import { daemonCommand } from './daemon.js';
 
 const COMMANDS = {
   help: () => printHelp(),
@@ -58,6 +59,7 @@ const COMMANDS = {
   replace: replaceCommand,
   adr: adrCommand,
   security: securityCommand,
+  daemon: daemonCommand,
 };
 
 export async function run(argv) {
