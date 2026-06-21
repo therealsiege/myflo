@@ -1,12 +1,15 @@
 // `flo replace ruflo` — cutover script.
 // Removes ruflo / claude-flow entries from ~/.claude/mcp.json and project
-// .claude/settings.json mcpServers blocks, leaving only flo. Idempotent.
-// Backs up both files before writing.
+// .claude/settings.json mcpServers blocks, AND shells out to
+// `claude mcp remove <name>` for entries the Claude CLI itself manages
+// (e.g. ones registered via `claude mcp add` that don't live in those files).
+// Idempotent. Backs up json files before writing.
 
 import { readFile, writeFile, copyFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 
 const USER_MCP = join(homedir(), '.claude', 'mcp.json');
 const PROJECT_SETTINGS = join(process.cwd(), '.claude', 'settings.json');
@@ -57,9 +60,70 @@ export async function replaceCommand(args) {
     console.log(`✓ ${label}: removed [${result.removed.join(', ')}] from ${path} (backup: ${backup})`);
   }
 
+  // Phase 2: ask Claude CLI itself to remove any ruflo/claude-flow servers it
+  // tracks. This catches entries registered via `claude mcp add` that don't
+  // live in mcp.json or settings.json (e.g. user/local scope state the CLI
+  // keeps elsewhere). The flo replace ruflo command was previously a no-op
+  // for users in this state — see #1 on the v1.0.1 premortem.
+  const claudePath = await whichClaudeCli();
+  if (!claudePath) {
+    console.log('');
+    console.log('- claude CLI not on PATH — skipping `claude mcp remove` step.');
+    console.log('  (Files were cleaned above; that is usually enough.)');
+  } else {
+    console.log('');
+    console.log(`Running \`claude mcp remove\` for each known ruflo name...`);
+    for (const name of RUFLO_KEYS) {
+      if (opts.dryRun) {
+        console.log(`# would run: claude mcp remove "${name}"`);
+        continue;
+      }
+      const res = await runClaudeMcpRemove(claudePath, name);
+      if (res.removed) {
+        console.log(`✓ claude mcp remove "${name}" — removed from ${res.scope || 'config'}`);
+      } else if (res.notFound) {
+        console.log(`= claude mcp remove "${name}" — not registered, skipping`);
+      } else {
+        console.log(`× claude mcp remove "${name}" — failed: ${res.error}`);
+      }
+    }
+  }
+
   console.log('');
   console.log('Done. Restart Claude Code to pick up the change.');
   console.log("If you need to roll back, the .flo-bak.* file is your snapshot.");
+}
+
+async function whichClaudeCli() {
+  return new Promise((resolve) => {
+    const p = spawn('which', ['claude'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    p.stdout.on('data', (b) => { out += b.toString(); });
+    p.on('close', (code) => resolve(code === 0 ? out.trim() : null));
+    p.on('error', () => resolve(null));
+  });
+}
+
+async function runClaudeMcpRemove(claudePath, name) {
+  return new Promise((resolve) => {
+    const p = spawn(claudePath, ['mcp', 'remove', name], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    p.stdout.on('data', (b) => { stdout += b.toString(); });
+    p.stderr.on('data', (b) => { stderr += b.toString(); });
+    p.on('close', (code) => {
+      const combined = (stdout + stderr).toLowerCase();
+      if (code === 0) {
+        const scopeMatch = stdout.match(/from\s+(\w+)\s+config/i);
+        resolve({ removed: true, scope: scopeMatch?.[1] || null });
+      } else if (/no.*server.*found|not.*found|does not exist/.test(combined)) {
+        resolve({ notFound: true });
+      } else {
+        resolve({ error: (stderr || stdout).trim().slice(0, 200) || `exit ${code}` });
+      }
+    });
+    p.on('error', (err) => resolve({ error: err.message }));
+  });
 }
 
 function removeRufloFrom(obj) {
@@ -114,6 +178,10 @@ Specifically removes:
   - permissions.allow entries matching 'mcp__ruflo__*' or 'mcp__claude-flow__*'
 
 Both files are backed up to <path>.flo-bak.<ts> before being rewritten.
+
+Also runs \`claude mcp remove ruflo\` and \`claude mcp remove claude-flow\`
+to catch entries the Claude CLI tracks outside those files (registered via
+\`claude mcp add\`). Silently skipped if the claude CLI isn't on PATH.
 
 Idempotent. Re-running on a clean config is a no-op.
 

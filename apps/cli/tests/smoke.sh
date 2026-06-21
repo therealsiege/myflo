@@ -387,6 +387,32 @@ for line in sys.stdin:
 if [ "$TOOLCOUNT" = "22" ]; then echo "  PASS  mcp tools/list count (22)"; PASS=$((PASS+1))
 else echo "  FAIL  mcp tools/list count (got $TOOLCOUNT)"; FAIL=$((FAIL+1)); fi
 
+# `flo replace ruflo` against a fixture project — file rewrites + graceful
+# skip when claude CLI is unavailable (PATH hidden to avoid mutating real config).
+REPLACE_DIR="$TMP/replace-ruflo-test"
+mkdir -p "$REPLACE_DIR/.claude"
+cat > "$REPLACE_DIR/.claude/settings.json" <<'JSON'
+{
+  "mcpServers": {
+    "ruflo": {"command": "npx", "args": ["-y", "ruflo@latest", "mcp", "start"]},
+    "flo": {"command": "node", "args": ["/x.js"]}
+  },
+  "enabledMcpjsonServers": ["ruflo", "flo"],
+  "permissions": {"allow": ["mcp__ruflo__foo", "Bash(ls:*)", "mcp__claude-flow__bar"]}
+}
+JSON
+NODE_BIN=$(which node)
+REPLACE_OUT=$(cd "$REPLACE_DIR" && PATH="/usr/bin:/bin" $NODE_BIN "$REPO_ROOT/apps/cli/bin/flo.js" replace ruflo 2>&1)
+if echo "$REPLACE_OUT" | grep -q "claude CLI not on PATH"; then
+  if python3 -c "import json; d=json.load(open('$REPLACE_DIR/.claude/settings.json')); assert list(d['mcpServers'].keys())==['flo'] and d['enabledMcpjsonServers']==['flo'] and d['permissions']['allow']==['Bash(ls:*)']" 2>/dev/null; then
+    echo "  PASS  replace ruflo (file rewrite + graceful claude-cli skip)"; PASS=$((PASS+1))
+  else
+    echo "  FAIL  replace ruflo: file content unexpected"; FAIL=$((FAIL+1))
+  fi
+else
+  echo "  FAIL  replace ruflo: expected 'claude CLI not on PATH' message"; FAIL=$((FAIL+1))
+fi
+
 echo "--------------"
 echo "$PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then exit 1; fi
