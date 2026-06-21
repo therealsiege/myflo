@@ -1,6 +1,6 @@
 // Reads ~/.flo/messages/<recipient>/ mailbox files written by the inbox bridge.
 
-import { readdir, readFile, stat, unlink } from 'node:fs/promises';
+import { readdir, readFile, stat, unlink, mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -116,4 +116,29 @@ export async function listAllMailboxes() {
     out.push({ recipient: r, messages: await listMessages(r) });
   }
   return out;
+}
+
+// Write a message to a recipient's mailbox. Used by agent coordination to
+// notify leads when work completes. Markdown body with frontmatter.
+export async function sendMessageToMailbox({ to, from, summary, message }) {
+  if (!to) throw new Error('sendMessageToMailbox: `to` is required');
+  const dir = join(MAILBOX_ROOT, String(to).replace(/[^a-zA-Z0-9_-]/g, '_'));
+  if (!existsSync(dir)) await mkdir(dir, { recursive: true });
+  const ts = new Date();
+  const stamp = ts.toISOString().replace(/[:.]/g, '-');
+  const slug = String(summary || 'message').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40) || 'msg';
+  const filename = `${stamp}-${slug}.md`;
+  const body = [
+    '---',
+    `to: ${to}`,
+    from ? `from: ${from}` : null,
+    `ts: ${ts.toISOString()}`,
+    summary ? `summary: ${summary}` : null,
+    '---',
+    '',
+    message || '',
+    '',
+  ].filter((l) => l !== null).join('\n');
+  await writeFile(join(dir, filename), body, 'utf8');
+  return { to, from, filename, path: join(dir, filename) };
 }

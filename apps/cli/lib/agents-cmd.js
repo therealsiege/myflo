@@ -9,6 +9,7 @@ import {
   heartbeat,
   STATUSES,
 } from './agents-store.js';
+import { autoAssignCmd, completeTaskCmd } from './agents-coord.js';
 
 export async function agentsCommand(args) {
   const [sub = 'help', ...rest] = args;
@@ -21,8 +22,10 @@ export async function agentsCommand(args) {
   if (sub === 'stop') return stopCmd(rest);
   if (sub === 'delete' || sub === 'rm') return deleteCmd(rest);
   if (sub === 'health') return healthCmd(rest);
+  if (sub === 'auto-assign') return autoAssignCmd(rest);
+  if (sub === 'complete-task') return completeTaskCmd(rest);
   console.error(`flo agents: unknown subcommand '${sub}'`);
-  console.error(`Available: spawn, list, get, update, heartbeat, stop, delete, health, help`);
+  console.error(`Available: spawn, list, get, update, heartbeat, stop, delete, health, auto-assign, complete-task, help`);
   process.exit(2);
 }
 
@@ -38,6 +41,9 @@ Usage:
   flo agents stop <id>
   flo agents delete <id>
   flo agents health [--json]                 # heartbeat-age view of live agents
+  flo agents auto-assign --by <id> [--json]  # claim next pending task for this agent
+  flo agents complete-task <task-id> --by <id> [--result <s>] [--json]
+                                             # complete + store pattern + notify lead
 
 Stores append-only events at ~/.flo/agents.jsonl. Does NOT spawn a process —
 Claude Code's Task tool does that. This is a coordination record so multiple

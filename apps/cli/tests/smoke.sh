@@ -476,6 +476,31 @@ if $FLO security scan --dir "$SEC_PROJ" --json 2>/dev/null \
 else echo "  FAIL  auto-security scan"; FAIL=$((FAIL+1)); fi
 unset FLO_HOME
 
+# P4: orchestrate → topology → auto-assign → complete-task end-to-end
+export FLO_HOME="$TMP/p4-home"
+P4_LEAD=$($FLO agents spawn coordinator --name lead --json | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
+P4_W1=$($FLO agents spawn coder --name worker-1 --parent "$P4_LEAD" --json | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
+$FLO swarm orchestrate "Build feature X" --into 2 --owner "$P4_LEAD" >/dev/null 2>&1
+P4_CLAIM=$($FLO agents auto-assign --by "$P4_W1" --json 2>/dev/null)
+if echo "$P4_CLAIM" | python3 -c "import sys,json;d=json.load(sys.stdin);assert d['claimed']==True;assert d['task']['owner']=='$P4_W1'" 2>/dev/null; then
+  echo "  PASS  swarm orchestrate + auto-assign (worker claimed subtask)"; PASS=$((PASS+1))
+else echo "  FAIL  swarm orchestrate + auto-assign"; FAIL=$((FAIL+1)); fi
+
+P4_TID=$(echo "$P4_CLAIM" | python3 -c "import sys,json;print(json.load(sys.stdin)['task']['id'])" 2>/dev/null)
+if $FLO agents complete-task "$P4_TID" --by "$P4_W1" --result "ok" --json 2>/dev/null \
+  | python3 -c "import sys,json;d=json.load(sys.stdin);assert d['completed']==True;assert d['leadNotified']==True" 2>/dev/null; then
+  if ls "$FLO_HOME/messages/$P4_LEAD/"*.md >/dev/null 2>&1; then
+    echo "  PASS  complete-task (pattern stored + lead mailbox written)"; PASS=$((PASS+1))
+  else echo "  FAIL  complete-task: no lead mailbox file"; FAIL=$((FAIL+1)); fi
+else echo "  FAIL  complete-task command"; FAIL=$((FAIL+1)); fi
+
+# Topology shows hierarchical-mesh tree
+if $FLO swarm topology --json 2>/dev/null \
+  | python3 -c "import sys,json;t=json.load(sys.stdin);assert len(t)==1;assert t[0]['name']=='lead';assert len(t[0]['children'])==1;assert t[0]['children'][0]['name']=='worker-1'" 2>/dev/null; then
+  echo "  PASS  swarm topology (parent/child tree rendered)"; PASS=$((PASS+1))
+else echo "  FAIL  swarm topology"; FAIL=$((FAIL+1)); fi
+unset FLO_HOME
+
 echo "--------------"
 echo "$PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then exit 1; fi

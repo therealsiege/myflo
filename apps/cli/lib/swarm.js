@@ -103,10 +103,61 @@ export async function swarmCommand(args) {
   if (sub === 'vote') return swarmVoteCommand(rest);
   if (sub === 'tally') return swarmTallyCommand(rest);
   if (sub === 'votes') return swarmVotesCommand(rest);
+  if (sub === 'topology') {
+    const { topologyCmd } = await import('./agents-coord.js');
+    return topologyCmd(rest);
+  }
+  if (sub === 'orchestrate') return swarmOrchestrateCommand(rest);
   if (sub === 'help' || sub === '--help' || sub === '-h') return printSwarmHelp();
   console.error(`flo swarm: unknown subcommand '${sub}'`);
-  console.error(`Available: status, vote, tally, votes, help`);
+  console.error(`Available: status, vote, tally, votes, topology, orchestrate, help`);
   process.exit(2);
+}
+
+async function swarmOrchestrateCommand(args) {
+  const { createTask } = await import('./tasks-store.js');
+  let subject = null;
+  let into = 3;
+  let strategy = 'split';
+  let owner = null;
+  let json = false;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--into') into = parseInt(args[++i], 10) || 3;
+    else if (args[i] === '--strategy') strategy = args[++i];
+    else if (args[i] === '--owner') owner = args[++i];
+    else if (args[i] === '--json') json = true;
+    else if (!subject && !args[i].startsWith('--')) subject = args[i];
+  }
+  if (!subject) {
+    console.error('flo swarm orchestrate: missing <subject>');
+    console.error('  flo swarm orchestrate "Build OAuth flow" --into 4 --owner lead');
+    process.exit(2);
+  }
+  // Create parent task
+  const parent = await createTask({
+    subject: `[orchestrate] ${subject}`,
+    description: `Auto-decomposed into ${into} subtasks (strategy: ${strategy}).`,
+    tags: ['orchestrated', `strategy:${strategy}`],
+    owner,
+    status: 'in_progress',
+  });
+  // Create N child tasks
+  const subtasks = [];
+  for (let i = 1; i <= into; i++) {
+    const child = await createTask({
+      subject: `${subject} — part ${i}/${into}`,
+      description: `Subtask ${i} of ${into} for parent ${parent.id} ("${subject}").`,
+      tags: ['orchestrated-child', `parent:${parent.id}`],
+      parent: parent.id,
+      status: 'pending',
+    });
+    subtasks.push(child);
+  }
+  const result = { parent, subtasks: subtasks.map((s) => ({ id: s.id, subject: s.subject })) };
+  if (json) { process.stdout.write(JSON.stringify(result, null, 2) + '\n'); return; }
+  console.log(`✓ orchestrated "${subject}" → parent ${parent.id} + ${subtasks.length} subtasks`);
+  for (const s of subtasks) console.log(`  - ${s.id}: ${s.subject}`);
+  console.log('\nAgents can now claim work with: flo agents auto-assign --by <agent-id>');
 }
 
 function printSwarmHelp() {
@@ -117,6 +168,9 @@ Usage:
   flo swarm vote <proposal> --voter <id> [--vote yes|no|abstain] [--weight N] [--json]
   flo swarm tally <proposal> [--json]
   flo swarm votes [<proposal>] [--json]
+  flo swarm topology [--json]                       # parent/child agent tree
+  flo swarm orchestrate <subject> [--into N] [--owner <agent>] [--json]
+                                                    # decompose task into N subtasks
 
 State files under .swarm/ in the current project:
   state.json            — populated by 'npx ruflo swarm init' (read-only here)
