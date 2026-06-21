@@ -22,6 +22,8 @@ import { exportCommand, importCommand } from './export.js';
 import { logCommand } from './log-cmd.js';
 import { completionsCommand } from './completions.js';
 import { editCommand } from './edit-cmd.js';
+import { adrCommand } from './auto-adr.js';
+import { securityCommand } from './auto-security.js';
 
 const COMMANDS = {
   help: () => printHelp(),
@@ -54,6 +56,8 @@ const COMMANDS = {
   agents: agentsCommand,
   hook: hookCommand,
   replace: replaceCommand,
+  adr: adrCommand,
+  security: securityCommand,
 };
 
 export async function run(argv) {

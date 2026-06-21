@@ -10,6 +10,8 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { storeEntry } from './memory-store.js';
+import { maybeDraftAdr } from './auto-adr.js';
+import { maybeScanEdit } from './auto-security.js';
 
 const FLO_HOME = process.env.FLO_HOME || join(homedir(), '.flo');
 const HOOK_LOG = join(FLO_HOME, 'logs', 'hooks.jsonl');
@@ -33,6 +35,9 @@ export async function hookCommand(args) {
     await logEvent(event, rest);
     if (event === 'post-task' || event === 'post-edit') {
       await maybeRecordOutcome(event, rest);
+    }
+    if (event === 'post-edit') {
+      await maybeRunPostEditAnalyses(rest);
     }
     if (event === 'route') {
       // Print empty string — Claude Code's hook protocol expects stdout to be
@@ -123,6 +128,24 @@ async function maybeRecordOutcome(event, args) {
     });
   } catch {
     // jsonl store fails silently; that's fine
+  }
+}
+
+// Post-edit auto-analyses: ADR draft + security scan. Each is best-effort and
+// never throws past this function. Set FLO_DISABLE_AUTO_ADR=1 or
+// FLO_DISABLE_AUTO_SECURITY=1 to suppress per-feature.
+async function maybeRunPostEditAnalyses(args) {
+  const env = collectEnv();
+  const filePath = env.CLAUDE_FILE_PATHS || args[0] || null;
+  if (!filePath) return;
+  const projectDir = env.CLAUDE_PROJECT_DIR || process.cwd();
+  if (process.env.FLO_DISABLE_AUTO_ADR !== '1') {
+    try { await maybeDraftAdr({ filePath, tool: env.CLAUDE_TOOL_NAME, projectDir }); }
+    catch (err) { process.stderr.write(`flo auto-adr: ${err.message}\n`); }
+  }
+  if (process.env.FLO_DISABLE_AUTO_SECURITY !== '1') {
+    try { await maybeScanEdit({ filePath, projectDir }); }
+    catch (err) { process.stderr.write(`flo auto-security: ${err.message}\n`); }
   }
 }
 

@@ -413,6 +413,35 @@ else
   echo "  FAIL  replace ruflo: expected 'claude CLI not on PATH' message"; FAIL=$((FAIL+1))
 fi
 
+# Auto-ADR: trigger via flo adr draft + verify file lands
+export FLO_HOME="$TMP/adr-home"
+if $FLO adr draft --file "src/api/users.ts" >/dev/null 2>&1; then
+  if ls "$FLO_HOME/adr"/ADR-001-*.md >/dev/null 2>&1; then
+    echo "  PASS  auto-adr draft (api-route trigger)"; PASS=$((PASS+1))
+  else echo "  FAIL  auto-adr draft: no file written"; FAIL=$((FAIL+1)); fi
+else echo "  FAIL  auto-adr draft command"; FAIL=$((FAIL+1)); fi
+unset FLO_HOME
+
+# Auto-ADR: post-edit hook triggers draft on schema file
+export FLO_HOME="$TMP/adr-hook-home"
+if CLAUDE_FILE_PATHS="db/schema.sql" $FLO hook post-edit >/dev/null 2>&1; then
+  if ls "$FLO_HOME/adr"/ADR-001-*.md >/dev/null 2>&1; then
+    echo "  PASS  auto-adr post-edit hook"; PASS=$((PASS+1))
+  else echo "  FAIL  auto-adr hook: no draft created"; FAIL=$((FAIL+1)); fi
+else echo "  FAIL  auto-adr hook command"; FAIL=$((FAIL+1)); fi
+unset FLO_HOME
+
+# Auto-security: secret-pattern detection in a leaky file
+export FLO_HOME="$TMP/sec-home"
+SEC_PROJ="$TMP/sec-proj"
+mkdir -p "$SEC_PROJ"
+printf 'const stripe = "sk_test_abcd1234567890abcdef1234567890";\n' > "$SEC_PROJ/leak.js"
+if $FLO security scan --dir "$SEC_PROJ" --json 2>/dev/null \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); assert any(f['kind']=='secret-pattern' and f['pattern']=='stripe-key' for f in d)" 2>/dev/null; then
+  echo "  PASS  auto-security scan (stripe-key detected)"; PASS=$((PASS+1))
+else echo "  FAIL  auto-security scan"; FAIL=$((FAIL+1)); fi
+unset FLO_HOME
+
 echo "--------------"
 echo "$PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then exit 1; fi
