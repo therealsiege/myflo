@@ -1,38 +1,38 @@
 # myflo
 
-Local-first developer workbench. CLI + MCP server + Next.js dashboard. Everything lives on disk under `~/.flo/`. No cloud dependencies. Designed to replace ruflo for daily Claude Code work.
+Local-first developer workbench for Claude Code. CLI + MCP server + Next.js dashboard. Everything lives on disk under `~/.flo/`. No cloud. No API keys.
 
-## Quick start
+[![npm](https://img.shields.io/npm/v/@fuzeelogik/myflo.svg?label=npm%20%40fuzeelogik%2Fmyflo)](https://www.npmjs.com/package/@fuzeelogik/myflo)
+[![smoke](https://github.com/therealsiege/myflo/actions/workflows/flo-smoke.yml/badge.svg)](https://github.com/therealsiege/myflo/actions/workflows/flo-smoke.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Once `npx myflo init` is published to npm (Phase 6 in flight), this becomes:
+→ **Site:** https://myflo-tau.vercel.app (myflo.dev pending DNS)
 
-```bash
-npx myflo init
-flo notes "First note #flo"
-flo --help
-```
-
-Today, from a checkout:
+## Install
 
 ```bash
-cd apps/cli && npm link        # `flo` becomes globally available
-flo setup                      # one-time onboarding (idempotent)
-flo notes "First note #flo"    # quick capture
-cd ../../web && pnpm dev --port 3030   # open http://localhost:3030
+npm install -g @fuzeelogik/myflo
+flo setup
 ```
+
+Or one-shot:
+
+```bash
+npx @fuzeelogik/myflo setup
+```
+
+`flo setup` creates `~/.flo/{memory,messages,logs}/`, initializes `~/.flo/{inboxes,terminals}.json`, registers `flo` as an MCP server in `~/.claude/mcp.json`, and runs `flo doctor`.
 
 ## What's in here
 
 | Path | What it is |
 |---|---|
-| `apps/cli/` | The `flo` CLI — pure ESM Node, zero build step. Publishes as `myflo` on npm. |
+| `apps/cli/` | The `flo` CLI — pure ESM Node, zero build step. Publishes as `@fuzeelogik/myflo` on npm. |
 | `apps/cli/lib/mcp-server.js` | stdio MCP server exposing 22 flo tools to Claude Code agents. |
+| `apps/site/` | Static landing page (deployed to Vercel as myflo.dev). |
 | `web/` | Next.js 16 dashboard (Tailwind v4, shadcn). 9 panels. |
-| `packages/@myflo/{shared,memory,hooks}/` | Forked from ruflo's `@claude-flow/*`. `@myflo/memory` is wired into `flo memory` via `FLO_MEMORY_BACKEND=agentdb`. |
-| `plugins/` | Native plugins inherited from ruflo (some still ruflo-prefixed; cleanup in progress). |
+| `packages/@myflo/{shared,memory,hooks}/` | Forked from ruflo's `@claude-flow/*`. `@myflo/memory` is opt-in via `FLO_MEMORY_BACKEND=agentdb` (monorepo-only — not published to npm yet). |
 | `.claude/` | Hooks, agents, skills, settings for Claude Code in this repo. |
-
-The `v3/@claude-flow/*` tree was deleted in Phase 3 — flo runs entirely on `apps/cli/` + `packages/@myflo/`.
 
 ## CLI surface (27 commands, 22 MCP tools)
 
@@ -42,34 +42,22 @@ The `v3/@claude-flow/*` tree was deleted in Phase 3 — flo runs entirely on `ap
 - **Watch**: `flo inbox` (folder watcher + macOS launchd installer), `flo log` (live activity tail)
 - **Recall**: `flo memory search` (BM25 default, FTS5 via `FLO_MEMORY_BACKEND=agentdb`), `flo guidance audit` (`~/.claude/` capability dedup), `flo activity` (cross-subsystem timeline)
 - **Coordinate**: `flo agents` (named-agent registry), `flo swarm vote/tally`, `flo session terminal-*` (Ghostty/iTerm window restore)
-- **Audio**: `flo transcribe` (local whisper/mlx-whisper, no cloud)
+- **Audio**: `flo transcribe` (local whisper/mlx-whisper/whisper-cpp, no cloud)
 - **Sessions**: `flo sessions list` (Claude Code checkpoints)
-- **Hooks**: `flo hook <event>` — replaces ruflo's `.claude/helpers/*.cjs` shim layer
+- **Hooks**: `flo hook <event>` — best-effort Claude Code hook dispatcher
 - **Plumbing**: `flo setup`, `flo doctor`, `flo migrate`, `flo replace ruflo` (cutover), `flo mcp start`, `flo completions {bash,zsh,fish}`, `flo edit {memory,note,task}`, `flo export` / `flo import`
 
 Storage convention: every persistent surface lives under `~/.flo/`. Files are append-only JSON / JSONL where reasonable, so history survives mistakes.
 
 ## Web dashboard
 
-`cd web && pnpm dev --port 3030`. Routes:
+```bash
+cd web && pnpm dev --port 3030
+```
 
-- `/` — aggregated overview
-- `/activity` — chronological feed across every subsystem
-- `/swarm` — q-learning + active swarm state
-- `/memory` — namespace browser + search
-- `/tasks` — 3-column board (pending / in_progress / completed)
-- `/sessions` — Claude Code checkpoints
-- `/capabilities` — `~/.claude/` audit (duplicates, missing descriptions)
-- `/inbox` — registered folder watchers
-- `/transcripts` — sidecar `.txt` files from audio drops
+Routes: `/` (overview), `/activity`, `/swarm`, `/memory`, `/tasks`, `/sessions`, `/capabilities`, `/inbox`, `/transcripts`.
 
 The web app subprocesses the `flo` CLI for everything. Server-only calls use `execFile` with an arg array — no shell, no injection surface.
-
-## MCP integration
-
-`flo migrate` registers `flo` alongside any existing ruflo entry in `~/.claude/mcp.json`. Once you've verified flo works, run `flo replace ruflo` to remove the ruflo entry. Both files are backed up first.
-
-22 MCP tools registered: `flo_memory_*` (4), `flo_tasks_*` (5), `flo_agent_*` (4), `flo_swarm_*` (3), `flo_inbox_list`, `flo_messages_list`, `flo_transcribe(_detect)`, `flo_sessions_list`, `flo_guidance_audit`.
 
 ## Replacing ruflo
 
@@ -77,30 +65,40 @@ The web app subprocesses the `flo` CLI for everything. Server-only calls use `ex
 flo migrate                  # adds flo to ~/.claude/mcp.json (idempotent)
 # … verify flo tools work via Claude Code …
 flo replace ruflo --dry-run  # preview what would be removed
-flo replace ruflo            # remove ruflo / claude-flow entries
-                             # backs up <path>.flo-bak.<ts> first
+flo replace ruflo            # removes ruflo / claude-flow entries from
+                             # ~/.claude/mcp.json + project .claude/settings.json
+                             # AND shells out to `claude mcp remove` for entries
+                             # the Claude CLI tracks elsewhere
+                             # (backs up <path>.flo-bak.<ts> first)
 ```
 
-## Run the smoke suite
+Then restart Claude Code.
+
+## Develop
 
 ```bash
-bash apps/cli/tests/smoke.sh
+pnpm install
+bash apps/cli/tests/smoke.sh   # 44 tests against an ephemeral FLO_HOME
 ```
 
-Exercises every CLI command end-to-end against an ephemeral `FLO_HOME`. **43 tests, all green.** Same suite runs on every PR via `.github/workflows/flo-smoke.yml` (Ubuntu + macOS matrix).
+Same suite runs on every PR via `.github/workflows/flo-smoke.yml` (Ubuntu + macOS).
 
-## Status
+## Releasing
 
-**v1.0.0-rc.1** — feature-complete for the ruflo-replacement plan. Phases 1-7 landed:
+Tag-driven publish:
 
-1. ✅ AgentDB-backed memory via `@myflo/memory`
-2. ✅ 10 ported MCP tools (agents, swarm vote/tally)
-3. ✅ `v3/@claude-flow/*` tree deleted
-4. ✅ `flo hook <event>` replaces `.claude/helpers/*.cjs`
-5. ✅ `flo replace ruflo` cutover command
-6. 🟡 npm publish (this version is rc.1; needs a clean `npm publish` from `apps/cli/`)
-7. ✅ README + plugins audit
+```bash
+# bump apps/cli/package.json version
+# bump apps/site/index.html footer
+# commit + push
+git tag -a vX.Y.Z -m "..." main
+git push origin vX.Y.Z   # triggers .github/workflows/npm-publish.yml
+```
+
+Workflow runs `pnpm install --frozen-lockfile`, builds `@myflo/memory`, runs smoke, guards against `workspace:*` leaking into install-path deps, publishes, verifies. Then write release notes with `gh release create vX.Y.Z`.
+
+To deprecate a broken version: GitHub Actions → "npm deprecate" → Run workflow → version + message.
 
 ## License
 
-MIT. Forked from [ruflo](https://github.com/ruvnet/claude-flow) (also MIT) by [@ruvnet](https://github.com/ruvnet).
+MIT. Forked from [ruflo](https://github.com/ruvnet/claude-flow) (also MIT) by [@ruvnet](https://github.com/ruvnet). The flo CLI on top is ours.

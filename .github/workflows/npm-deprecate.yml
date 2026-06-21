@@ -31,10 +31,16 @@ jobs:
       - name: Verify
         env:
           PKG_VERSION: ${{ inputs.version }}
+        # Registry caches can lag a few seconds after deprecate. Retry briefly.
         run: |
-          DEP=$(npm view "@fuzeelogik/myflo@$PKG_VERSION" deprecated 2>&1 || echo "")
-          if [ -z "$DEP" ]; then
-            echo "::error::deprecation did not propagate"
-            exit 1
-          fi
-          echo "✓ @fuzeelogik/myflo@$PKG_VERSION deprecated: $DEP"
+          for i in 1 2 3 4 5; do
+            DEP=$(npm view "@fuzeelogik/myflo@$PKG_VERSION" deprecated 2>&1 || echo "")
+            if [ -n "$DEP" ]; then
+              echo "✓ @fuzeelogik/myflo@$PKG_VERSION deprecated: $DEP"
+              exit 0
+            fi
+            echo "  (attempt $i/5: not yet propagated, waiting 5s...)"
+            sleep 5
+          done
+          echo "::error::deprecation did not propagate after 25s"
+          exit 1
