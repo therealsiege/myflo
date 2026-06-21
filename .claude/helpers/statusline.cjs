@@ -64,7 +64,10 @@ function writeCache(data) {
 }
 
 /**
- * Single source of truth: delegate to the CLI hooks statusline --json command.
+ * Reads directly from local files. We previously delegated to
+ * `npx @claude-flow/cli@latest hooks statusline --json`, but post-myflo-fork
+ * that CLI is gone and the upstream version reflects ruflo's data not flo's.
+ * The local fallback was already comprehensive — now it's the only path.
  * Falls back to a minimal static object on failure so the statusline still renders.
  *
  * Fix for ruflo#2195: the previous local readers returned 0 for AgentDB patterns
@@ -74,25 +77,9 @@ function writeCache(data) {
 function getStatuslineData() {
   const cached = readCache();
   if (cached) return cached;
-
-  try {
-    const raw = execSync(
-      'npx --yes @claude-flow/cli@latest hooks statusline --json 2>/dev/null',
-      { encoding: 'utf-8', timeout: 8000, stdio: ['pipe', 'pipe', 'pipe'], cwd: CWD }
-    ).trim();
-    // The CLI may emit preamble lines before the JSON — find the first '{'.
-    const jsonStart = raw.indexOf('{');
-    if (jsonStart === -1) throw new Error('no JSON in CLI output');
-    const data = JSON.parse(raw.slice(jsonStart));
-    // Overlay real ADR count from both local directories (fast, no network).
-    data.adrs = getLocalADRCount();
-    writeCache(data);
-    return data;
-  } catch { /* CLI unavailable or timed out */ }
-
-  // Fallback: use local file probes only (will be less accurate, but non-zero
-  // when CLI is available and accurate when it's not).
-  return buildLocalFallback();
+  const data = buildLocalFallback();
+  writeCache(data);
+  return data;
 }
 
 // Count ADRs from BOTH known directories (fix for ruflo#2195: old code missed
@@ -335,27 +322,20 @@ function getCostFromStdin() {
 }
 
 // Read package version from the first package.json we find.
+// Prefers myflo's apps/cli (monorepo) and global @fuzeelogik/myflo installs.
 function getPkgVersion() {
-  let ver = '3.6';
+  let ver = '1.0';
   try {
     const home = os.homedir();
     const pkgPaths = [
-      path.join(home, '.claude', 'plugins', 'marketplaces', 'ruflo', 'package.json'),
-      path.join(CWD, 'node_modules', '@claude-flow', 'cli', 'package.json'),
-      path.join(CWD, 'node_modules', 'ruflo', 'package.json'),
-      path.join(CWD, 'v3', '@claude-flow', 'cli', 'package.json'),
+      path.join(CWD, 'apps', 'cli', 'package.json'),
+      path.join(CWD, 'node_modules', '@fuzeelogik', 'myflo', 'package.json'),
     ];
-    // #2221: global installs (npm i -g ruflo) live outside CWD/node_modules, so the
-    // probes above all miss and the version falls back to the hard-coded default.
-    // Derive the global node_modules dir from the running node binary (no npm spawn —
-    // statusline renders often). Covers nvm/mise (bin/../lib/node_modules) and Windows
-    // (bin/node_modules) layouts.
     try {
       const binDir = path.dirname(process.execPath);
       for (const gm of [path.join(binDir, '..', 'lib', 'node_modules'), path.join(binDir, 'node_modules')]) {
         pkgPaths.push(
-          path.join(gm, 'ruflo', 'package.json'),
-          path.join(gm, '@claude-flow', 'cli', 'package.json'),
+          path.join(gm, '@fuzeelogik', 'myflo', 'package.json'),
         );
       }
     } catch { /* ignore */ }
@@ -421,7 +401,7 @@ function generateStatusline() {
   const lines = [];
 
   // Header
-  let header = c.bold + c.brightPurple + '▊ RuFlo V' + pkgVersion + ' ' + c.reset;
+  let header = c.bold + c.brightPurple + '▊ myflo v' + pkgVersion + ' ' + c.reset;
   header += (coordinationActive ? c.brightCyan : c.dim) + '● ' + c.brightCyan + git.name + c.reset;
   if (git.gitBranch) {
     header += '  ' + c.dim + '│' + c.reset + '  ' + c.brightBlue + '⏇ ' + git.gitBranch + c.reset;

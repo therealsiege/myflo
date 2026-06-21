@@ -10,7 +10,7 @@
  * Backend priority:
  *   1. better-sqlite3 (native, WAL mode, indexed queries, ACID transactions)
  *   2. RuVector PostgreSQL (if RUVECTOR_* env vars set - TB-scale, GNN search)
- *   3. AgentDB from @claude-flow/memory (HNSW vector search)
+ *   3. AgentDB from @myflo/memory (HNSW vector search)
  *   4. JsonFileBackend (zero dependencies, always works)
  *
  * Proactive archiving:
@@ -727,14 +727,16 @@ async function resolveBackend() {
     }
   } catch { /* fall through */ }
 
-  // Tier 3: AgentDB from @claude-flow/memory (HNSW)
+  // Tier 3: AgentDB from @myflo/memory (HNSW)
   try {
-    const localDist = join(PROJECT_ROOT, 'v3/@claude-flow/memory/dist/index.js');
+    const localDist = join(PROJECT_ROOT, 'packages/@myflo/memory/dist/index.js');
     let memPkg = null;
     if (existsSync(localDist)) {
       memPkg = await import(`file://${localDist}`);
     } else {
-      memPkg = await import('@claude-flow/memory');
+      const { createRequire } = await import('module');
+      const require = createRequire(join(PROJECT_ROOT, 'apps/cli/package.json'));
+      memPkg = require('@myflo/memory');
     }
     if (memPkg?.AgentDBBackend) {
       const backend = new memPkg.AgentDBBackend();

@@ -131,32 +131,31 @@ class JsonFileBackend {
 // ============================================================================
 
 async function loadMemoryPackage() {
-  // Strategy 1: Local dev (built dist)
-  const localDist = join(PROJECT_ROOT, 'v3/@claude-flow/memory/dist/index.js');
+  // Strategy 1: Monorepo workspace dist (the canonical location post-v3-deletion)
+  const localDist = join(PROJECT_ROOT, 'packages/@myflo/memory/dist/index.js');
   if (existsSync(localDist)) {
     try {
       return await import(`file://${localDist}`);
     } catch { /* fall through */ }
   }
 
-  // Strategy 2: Use createRequire for CJS-style resolution (handles nested node_modules
-  // when installed as a transitive dependency via npx ruflo / npx claude-flow)
+  // Strategy 2: Use createRequire from apps/cli where @myflo/memory is a devDep
   try {
     const { createRequire } = await import('module');
-    const require = createRequire(join(PROJECT_ROOT, 'package.json'));
-    return require('@claude-flow/memory');
+    const require = createRequire(join(PROJECT_ROOT, 'apps/cli/package.json'));
+    return require('@myflo/memory');
   } catch { /* fall through */ }
 
-  // Strategy 3: ESM import (works when @claude-flow/memory is a direct dependency)
+  // Strategy 3: ESM import (works when @myflo/memory is a direct dependency)
   try {
-    return await import('@claude-flow/memory');
+    return await import('@myflo/memory');
   } catch { /* fall through */ }
 
-  // Strategy 4: Walk up from PROJECT_ROOT looking for @claude-flow/memory in any node_modules
+  // Strategy 4: Walk up from PROJECT_ROOT looking for @myflo/memory in any node_modules
   let searchDir = PROJECT_ROOT;
   const { parse } = await import('path');
   while (searchDir !== parse(searchDir).root) {
-    const candidate = join(searchDir, 'node_modules', '@claude-flow', 'memory', 'dist', 'index.js');
+    const candidate = join(searchDir, 'node_modules', '@myflo', 'memory', 'dist', 'index.js');
     if (existsSync(candidate)) {
       try {
         return await import(`file://${candidate}`);
