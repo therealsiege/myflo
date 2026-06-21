@@ -1,7 +1,7 @@
 // Memory store with two backends:
 //   - jsonl  (default) — file-backed JSONL per namespace under ~/.flo/memory/<ns>.jsonl
 //                        Pure JS, no native deps, BM25 ranking. Zero install cost.
-//   - agentdb         — SQLite-backed via @myflo/memory's SqlJsBackend. FTS5
+//   - agentdb         — SQLite-backed via @fuzeelogik/myflo-memory's SqlJsBackend. FTS5
 //                        keyword search, optional vector embeddings, scales further.
 //
 // Select via FLO_MEMORY_BACKEND env var or { backend } option on each call.

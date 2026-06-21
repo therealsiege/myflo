@@ -1,4 +1,4 @@
-// AgentDB-backed memory adapter. Wraps @myflo/memory's UnifiedMemoryService
+// AgentDB-backed memory adapter. Wraps @fuzeelogik/myflo-memory's UnifiedMemoryService
 // + SqlJsBackend to expose the same API as memory-store.js's JSONL backend:
 //   storeEntry, searchEntries, listEntries, getEntry, deleteEntry,
 //   listNamespaces, namespaceStats
@@ -21,12 +21,12 @@ let _backend = null;
 async function locateSqlJsWasm() {
   // sql.js ships its WASM as a file. By default it tries to fetch from
   // sql.js.org which fails offline. Point it at the bundled file.
-  // sql.js is a transitive dep of @myflo/memory, so we resolve via that
+  // sql.js is a transitive dep of @fuzeelogik/myflo-memory, so we resolve via that
   // package's location (createRequire from the memory module URL).
   const { createRequire } = await import('node:module');
   try {
-    // Resolve @myflo/memory's package.json to find its location
-    const memoryPkgUrl = import.meta.resolve('@myflo/memory/package.json');
+    // Resolve @fuzeelogik/myflo-memory's package.json to find its location
+    const memoryPkgUrl = import.meta.resolve('@fuzeelogik/myflo-memory/package.json');
     const req = createRequire(memoryPkgUrl);
     const sqlJsMain = req.resolve('sql.js');
     return sqlJsMain.replace(/sql-wasm\.js$/, 'sql-wasm.wasm');
@@ -39,18 +39,17 @@ async function getBackend() {
   if (_backend) return _backend;
   if (!existsSync(FLO_HOME)) await mkdir(FLO_HOME, { recursive: true });
   // Dynamic import keeps the heavy module out of the load path for the JSONL
-  // codepath. @myflo/memory is not yet published to npm — the agentdb backend
-  // only works when myflo is run from the monorepo (pnpm workspace resolves
-  // the package locally). For standalone `npx @fuzeelogik/myflo` installs,
-  // stick with the default jsonl backend.
+  // codepath. @fuzeelogik/myflo-memory is an optionalDependency — npm installs
+  // it by default but doesn't fail the install if e.g. better-sqlite3 native
+  // compile fails. If it's missing entirely, fall back gracefully.
   let SqlJsBackend;
   try {
-    ({ SqlJsBackend } = await import('@myflo/memory'));
+    ({ SqlJsBackend } = await import('@fuzeelogik/myflo-memory'));
   } catch (err) {
     throw new Error(
-      `agentdb backend requires @myflo/memory, which is not yet published to npm. ` +
-      `It currently resolves only inside the myflo monorepo. ` +
-      `Stick with the default jsonl backend (unset FLO_MEMORY_BACKEND). ` +
+      `agentdb backend requires @fuzeelogik/myflo-memory to be installed. ` +
+      `Install it: npm install @fuzeelogik/myflo-memory. ` +
+      `Or stick with the default jsonl backend (unset FLO_MEMORY_BACKEND). ` +
       `Underlying error: ${err.message}`
     );
   }
@@ -71,7 +70,7 @@ function newId() {
   return `${Date.now()}-${randomBytes(3).toString('hex')}`;
 }
 
-// Map flo-shape entry to @myflo/memory MemoryEntry. SqlJsBackend binds every
+// Map flo-shape entry to @fuzeelogik/myflo-memory MemoryEntry. SqlJsBackend binds every
 // field via positional ?-params, so undefined is fatal — we provide every
 // expected field with a sensible default.
 function toBackendEntry({ namespace = 'default', key, value, tags = [], metadata = {} }) {

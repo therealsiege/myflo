@@ -1,8 +1,14 @@
 {
-  "name": "@myflo/memory",
-  "version": "0.1.0",
+  "name": "@fuzeelogik/myflo-memory",
+  "version": "1.0.0",
   "type": "module",
-  "description": "MyFlo memory module — AgentDB unification, HNSW indexing, vector search, hybrid SQLite+AgentDB backend. Forked from @claude-flow/memory.",
+  "description": "myflo memory module — AgentDB + HNSW vector indexing, hybrid SQLite/sql.js backend. The agentdb-backed backend for @fuzeelogik/myflo when FLO_MEMORY_BACKEND=agentdb. Forked from @claude-flow/memory.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/therealsiege/myflo.git",
+    "directory": "packages/@myflo/memory"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {

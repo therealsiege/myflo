@@ -1,0 +1,91 @@
+name: npm publish @fuzeelogik/myflo-memory
+
+# Publishes packages/@myflo/memory to npm.
+# Triggered manually via workflow_dispatch — memory has its own release cadence,
+# CLI pins a published version. Future automation: trigger on memory-v* tags.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (matches packages/@myflo/memory/package.json)'
+        required: true
+        default: '1.0.0'
+      dry_run:
+        description: 'npm publish --dry-run only'
+        type: boolean
+        default: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Install (workspace resolves)
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify package version matches input
+        env:
+          EXPECTED: ${{ inputs.version }}
+        run: |
+          ACTUAL=$(jq -r .version packages/@myflo/memory/package.json)
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::version mismatch — package.json has $ACTUAL, workflow input is $EXPECTED. Bump packages/@myflo/memory/package.json first."
+            exit 1
+          fi
+          echo "✓ version $ACTUAL matches input"
+
+      - name: Build (also runs prepublishOnly export-contract check)
+        run: cd packages/@myflo/memory && pnpm build
+
+      - name: Guard against workspace:* leaking into published deps
+        run: |
+          BAD=$(jq -r '
+            (.dependencies // {}) + (.optionalDependencies // {})
+            | to_entries
+            | map(select(.value | startswith("workspace:")))
+            | map("  \(.key)=\(.value)")
+            | .[]
+          ' packages/@myflo/memory/package.json)
+          if [ -n "$BAD" ]; then
+            echo "::error::workspace:* in install-path deps:"
+            echo "$BAD"
+            exit 1
+          fi
+          echo "✓ no workspace:* in install-path deps"
+
+      - name: Dry-run pack
+        if: ${{ inputs.dry_run }}
+        run: cd packages/@myflo/memory && npm pack --dry-run
+
+      - name: Publish to npm
+        if: ${{ !inputs.dry_run }}
+        run: cd packages/@myflo/memory && npm publish --access public --tag latest
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify publish
+        if: ${{ !inputs.dry_run }}
+        env:
+          PKG_VERSION: ${{ inputs.version }}
+        run: |
+          for i in 1 2 3 4 5; do
+            PUB=$(npm view "@fuzeelogik/myflo-memory@$PKG_VERSION" version 2>&1 || echo "")
+            if [ "$PUB" = "$PKG_VERSION" ]; then
+              echo "✓ @fuzeelogik/myflo-memory@$PKG_VERSION live on npm"
+              exit 0
+            fi
+            echo "  (attempt $i/5: not yet propagated, waiting 5s...)"
+            sleep 5
+          done
+          echo "::error::publish did not propagate after 25s"
+          exit 1

@@ -14,8 +14,8 @@
     "README.md"
   ],
   "dependencies": {},
-  "devDependencies": {
-    "@myflo/memory": "workspace:*"
+  "optionalDependencies": {
+    "@fuzeelogik/myflo-memory": "^1.0.0"
   },
   "engines": {
     "node": ">=20.0.0"

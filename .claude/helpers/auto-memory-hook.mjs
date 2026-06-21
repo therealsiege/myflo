@@ -132,26 +132,26 @@ class JsonFileBackend {
 
 async function loadMemoryPackage() {
   // Strategy 1: Monorepo workspace dist (the canonical location post-v3-deletion)
-  const localDist = join(PROJECT_ROOT, 'packages/@myflo/memory/dist/index.js');
+  const localDist = join(PROJECT_ROOT, 'packages/@fuzeelogik/myflo-memory/dist/index.js');
   if (existsSync(localDist)) {
     try {
       return await import(`file://${localDist}`);
     } catch { /* fall through */ }
   }
 
-  // Strategy 2: Use createRequire from apps/cli where @myflo/memory is a devDep
+  // Strategy 2: Use createRequire from apps/cli where @fuzeelogik/myflo-memory is a devDep
   try {
     const { createRequire } = await import('module');
     const require = createRequire(join(PROJECT_ROOT, 'apps/cli/package.json'));
-    return require('@myflo/memory');
+    return require('@fuzeelogik/myflo-memory');
   } catch { /* fall through */ }
 
-  // Strategy 3: ESM import (works when @myflo/memory is a direct dependency)
+  // Strategy 3: ESM import (works when @fuzeelogik/myflo-memory is a direct dependency)
   try {
-    return await import('@myflo/memory');
+    return await import('@fuzeelogik/myflo-memory');
   } catch { /* fall through */ }
 
-  // Strategy 4: Walk up from PROJECT_ROOT looking for @myflo/memory in any node_modules
+  // Strategy 4: Walk up from PROJECT_ROOT looking for @fuzeelogik/myflo-memory in any node_modules
   let searchDir = PROJECT_ROOT;
   const { parse } = await import('path');
   while (searchDir !== parse(searchDir).root) {

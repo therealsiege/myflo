@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@fuzeelogik/myflo-memory': workspace:*
+
 importers:
 
   .:
@@ -31,14 +34,14 @@ importers:
         version: 1.6.1(@types/node@20.19.39)
 
   apps/cli:
-    devDependencies:
-      '@myflo/memory':
+    optionalDependencies:
+      '@fuzeelogik/myflo-memory':
         specifier: workspace:*
         version: link:../../packages/@myflo/memory
 
   packages/@myflo/hooks:
     dependencies:
-      '@myflo/memory':
+      '@fuzeelogik/myflo-memory':
         specifier: workspace:*
         version: link:../memory
       '@myflo/shared':

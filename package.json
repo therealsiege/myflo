@@ -16,6 +16,11 @@
     "test:smoke": "bash apps/cli/tests/smoke.sh"
   },
   "dependencies": {},
+  "pnpm": {
+    "overrides": {
+      "@fuzeelogik/myflo-memory": "workspace:*"
+    }
+  },
   "overrides": {
     "ruvector": "^0.2.27",
     "better-sqlite3": ">=12.8.0",
