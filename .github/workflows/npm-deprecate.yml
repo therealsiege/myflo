@@ -1,0 +1,36 @@
+name: npm deprecate
+
+# Manual workflow to mark a published version as deprecated on npm.
+# Use when a release shipped with a bug and we want users to skip it.
+# Runs `npm deprecate @fuzeelogik/myflo@<version> "<message>"` via NPM_TOKEN.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Exact version to deprecate (e.g. 1.0.0)'
+        required: true
+      message:
+        description: 'Deprecation message shown to npm users'
+        required: true
+
+jobs:
+  deprecate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Deprecate
+        run: npm deprecate "@fuzeelogik/myflo@${{ inputs.version }}" "${{ inputs.message }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Verify
+        run: |
+          DEP=$(npm view "@fuzeelogik/myflo@${{ inputs.version }}" deprecated 2>&1 || echo "")
+          if [ -z "$DEP" ]; then
+            echo "::error::deprecation did not propagate"
+            exit 1
+          fi
+          echo "✓ @fuzeelogik/myflo@${{ inputs.version }} deprecated: $DEP"
