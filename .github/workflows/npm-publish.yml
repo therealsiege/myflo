@@ -39,17 +39,26 @@ jobs:
       - name: Smoke test (must pass before publish)
         run: bash apps/cli/tests/smoke.sh
 
-      - name: Guard against workspace:* protocol in published package
+      - name: Guard against workspace:* in installed deps
         # npm publish does NOT rewrite `workspace:*` to real versions (pnpm publish does).
-        # If any dep in apps/cli/package.json still uses workspace:* at publish time,
-        # `npx <package>` will fail with EUNSUPPORTEDPROTOCOL for end users.
-        # Fail loudly here so a regression can't ship.
+        # Workspace protocol in `dependencies` or `optionalDependencies` of the published
+        # manifest breaks `npm install <pkg>` for downstream consumers with
+        # EUNSUPPORTEDPROTOCOL. `devDependencies` are safe — npm ignores them for
+        # transitive installs. Check only the install-path fields.
         run: |
-          if grep -E '"workspace:' apps/cli/package.json; then
-            echo "::error::apps/cli/package.json contains workspace:* deps — will break standalone install. Either publish the workspace package to npm and pin a real version, or remove the dep."
+          BAD=$(jq -r '
+            (.dependencies // {}) + (.optionalDependencies // {})
+            | to_entries
+            | map(select(.value | startswith("workspace:")))
+            | map("  \(.key)=\(.value)")
+            | .[]
+          ' apps/cli/package.json)
+          if [ -n "$BAD" ]; then
+            echo "::error::apps/cli/package.json has workspace:* in dependencies/optionalDependencies — will break standalone install:"
+            echo "$BAD"
             exit 1
           fi
-          echo "✓ no workspace:* protocol in apps/cli/package.json"
+          echo "✓ no workspace:* in dependencies / optionalDependencies"
 
       - name: Dry-run pack
         if: github.event.inputs.dry_run == 'true' || github.event_name == 'workflow_dispatch'
