@@ -1,6 +1,6 @@
 {
   "name": "@fuzeelogik/myflo",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "myflo — local-first developer workbench. CLI + MCP server + Next.js dashboard. Forked from ruflo for the runtime substrate; flo CLI on top is ours.",
   "type": "module",
   "bin": {

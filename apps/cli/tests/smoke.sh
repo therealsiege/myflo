@@ -476,6 +476,18 @@ if $FLO security scan --dir "$SEC_PROJ" --json 2>/dev/null \
 else echo "  FAIL  auto-security scan"; FAIL=$((FAIL+1)); fi
 unset FLO_HOME
 
+# statusline command: renders cleanly, JSON mode parses, includes 'myflo v'
+export FLO_HOME="$TMP/statusline-home"
+if $FLO statusline 2>/dev/null | grep -q "myflo v"; then
+  echo "  PASS  statusline renders 'myflo v<ver>'"; PASS=$((PASS+1))
+else echo "  FAIL  statusline text"; FAIL=$((FAIL+1)); fi
+
+if $FLO statusline --json 2>/dev/null \
+  | python3 -c "import sys,json;d=json.load(sys.stdin);assert d['version'];assert 'cwd' in d;assert 'git' in d;assert 'flo' in d" 2>/dev/null; then
+  echo "  PASS  statusline --json shape"; PASS=$((PASS+1))
+else echo "  FAIL  statusline --json"; FAIL=$((FAIL+1)); fi
+unset FLO_HOME
+
 # P4: orchestrate → topology → auto-assign → complete-task end-to-end
 export FLO_HOME="$TMP/p4-home"
 P4_LEAD=$($FLO agents spawn coordinator --name lead --json | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")

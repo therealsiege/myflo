@@ -25,6 +25,7 @@ import { editCommand } from './edit-cmd.js';
 import { adrCommand } from './auto-adr.js';
 import { securityCommand } from './auto-security.js';
 import { daemonCommand } from './daemon.js';
+import { statuslineCommand } from './statusline.js';
 
 const COMMANDS = {
   help: () => printHelp(),
@@ -60,6 +61,7 @@ const COMMANDS = {
   adr: adrCommand,
   security: securityCommand,
   daemon: daemonCommand,
+  statusline: statuslineCommand,
 };
 
 export async function run(argv) {

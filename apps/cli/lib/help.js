@@ -77,6 +77,9 @@ AUTO-ON-EDIT
                                        Anthropic, PEM, JWT, generic).
 
 MCP + PLUMBING
+  statusline [--json]                  Render a Claude Code status line.
+                                       Point .claude/settings.json statusLine.command
+                                       at \`sh -c 'exec flo statusline'\`.
   mcp start                            stdio MCP server. 22 tools for Claude Code.
   setup                                One-time onboarding (registers MCP, builds
                                        ~/.flo/, runs doctor).
