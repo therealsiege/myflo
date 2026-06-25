@@ -77,6 +77,11 @@ AUTO-ON-EDIT
                                        Anthropic, PEM, JWT, generic).
 
 MCP + PLUMBING
+  wizard, init                         Interactive guided setup. Walks through
+                                       8 sections: directories, MCP registration,
+                                       ruflo cutover, memory backend, status line,
+                                       post-edit hook, daemon + launchd, inbox
+                                       watchers, shell completions.
   statusline [--json]                  Render a Claude Code status line.
                                        Point .claude/settings.json statusLine.command
                                        at \`sh -c 'exec flo statusline'\`.

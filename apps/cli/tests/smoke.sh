@@ -476,6 +476,18 @@ if $FLO security scan --dir "$SEC_PROJ" --json 2>/dev/null \
 else echo "  FAIL  auto-security scan"; FAIL=$((FAIL+1)); fi
 unset FLO_HOME
 
+# wizard: non-TTY mode prints helpful text and exits 0 (no interactive hang)
+export FLO_HOME="$TMP/wizard-home"
+WIZ_OUT=$(echo "" | $FLO wizard 2>&1)
+if echo "$WIZ_OUT" | grep -q "Non-interactive mode" && echo "$WIZ_OUT" | grep -q "flo setup"; then
+  echo "  PASS  wizard non-TTY graceful path"; PASS=$((PASS+1))
+else echo "  FAIL  wizard non-TTY: missing expected output"; FAIL=$((FAIL+1)); fi
+
+if $FLO wizard --help 2>&1 | grep -q "8 sections"; then
+  echo "  PASS  wizard --help"; PASS=$((PASS+1))
+else echo "  FAIL  wizard --help"; FAIL=$((FAIL+1)); fi
+unset FLO_HOME
+
 # statusline command: renders cleanly, JSON mode parses, includes 'myflo v'
 export FLO_HOME="$TMP/statusline-home"
 if $FLO statusline 2>/dev/null | grep -q "myflo v"; then
