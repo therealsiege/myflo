@@ -8,11 +8,33 @@
 import { readFile, writeFile, copyFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname, parse } from 'node:path';
 import { spawn } from 'node:child_process';
 
 const USER_MCP = join(homedir(), '.claude', 'mcp.json');
 const PROJECT_SETTINGS = join(process.cwd(), '.claude', 'settings.json');
+
+// Claude Code's project-scope MCP file (.mcp.json) lives at the project root
+// OR at any ancestor directory — the CLI walks up from cwd to find it.
+// We collect every .mcp.json from cwd → / so we catch parent-dir registrations
+// that the user may have forgotten (the #1 cause of "I ran flo replace ruflo
+// but ruflo still shows in claude mcp list").
+function findMcpJsonAncestors(startDir) {
+  const found = [];
+  let dir = startDir;
+  const root = parse(dir).root;
+  // also check $HOME so we get ~/.mcp.json
+  const home = homedir();
+  while (true) {
+    const candidate = join(dir, '.mcp.json');
+    if (existsSync(candidate)) found.push(candidate);
+    if (dir === root) break;
+    dir = dirname(dir);
+  }
+  const homeCandidate = join(home, '.mcp.json');
+  if (existsSync(homeCandidate) && !found.includes(homeCandidate)) found.push(homeCandidate);
+  return found;
+}
 
 const RUFLO_KEYS = ['ruflo', 'claude-flow'];
 
@@ -31,6 +53,16 @@ export async function replaceCommand(args) {
     { label: 'user-global', path: USER_MCP },
     { label: 'project', path: PROJECT_SETTINGS },
   ];
+
+  // Add every .mcp.json from cwd up to / and ~/.mcp.json. These are Claude
+  // Code's project-scope MCP files; one may live at a parent directory and
+  // affect every repo underneath it.
+  for (const path of findMcpJsonAncestors(process.cwd())) {
+    const label = path.startsWith(homedir())
+      ? `mcp.json (${path.replace(homedir(), '~')})`
+      : `mcp.json (${path})`;
+    targets.push({ label, path });
+  }
 
   for (const { label, path } of targets) {
     if (!existsSync(path)) {
@@ -170,6 +202,11 @@ Usage:
 Removes ruflo / claude-flow entries from:
   ~/.claude/mcp.json                       (user-global MCP servers)
   ./.claude/settings.json                  (project mcpServers + permissions)
+  <cwd>/.mcp.json + every ancestor up to / (Claude Code walks up looking
+                                            for these; ruflo registered at
+                                            a parent dir affects every repo
+                                            underneath it)
+  ~/.mcp.json                              (home-dir project file)
 
 Specifically removes:
   - mcpServers.{ruflo,claude-flow}

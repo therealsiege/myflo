@@ -389,9 +389,13 @@ else echo "  FAIL  mcp tools/list count (got $TOOLCOUNT)"; FAIL=$((FAIL+1)); fi
 
 # `flo replace ruflo` against a fixture project — file rewrites + graceful
 # skip when claude CLI is unavailable (PATH hidden to avoid mutating real config).
+# Also creates a parent .mcp.json with ruflo to verify the walk-up cleanup.
 REPLACE_DIR="$TMP/replace-ruflo-test"
-mkdir -p "$REPLACE_DIR/.claude"
-cat > "$REPLACE_DIR/.claude/settings.json" <<'JSON'
+mkdir -p "$REPLACE_DIR/inner/.claude"
+cat > "$REPLACE_DIR/.mcp.json" <<'JSON'
+{"mcpServers": {"ruflo": {"command": "npx", "args": ["-y", "ruflo@latest", "mcp", "start"]}}}
+JSON
+cat > "$REPLACE_DIR/inner/.claude/settings.json" <<'JSON'
 {
   "mcpServers": {
     "ruflo": {"command": "npx", "args": ["-y", "ruflo@latest", "mcp", "start"]},
@@ -401,16 +405,23 @@ cat > "$REPLACE_DIR/.claude/settings.json" <<'JSON'
   "permissions": {"allow": ["mcp__ruflo__foo", "Bash(ls:*)", "mcp__claude-flow__bar"]}
 }
 JSON
+# Note: we cd into inner/ to exercise parent-dir .mcp.json walk-up
 NODE_BIN=$(which node)
-REPLACE_OUT=$(cd "$REPLACE_DIR" && PATH="/usr/bin:/bin" $NODE_BIN "$REPO_ROOT/apps/cli/bin/flo.js" replace ruflo 2>&1)
+REPLACE_OUT=$(cd "$REPLACE_DIR/inner" && PATH="/usr/bin:/bin" $NODE_BIN "$REPO_ROOT/apps/cli/bin/flo.js" replace ruflo 2>&1)
 if echo "$REPLACE_OUT" | grep -q "claude CLI not on PATH"; then
-  if python3 -c "import json; d=json.load(open('$REPLACE_DIR/.claude/settings.json')); assert list(d['mcpServers'].keys())==['flo'] and d['enabledMcpjsonServers']==['flo'] and d['permissions']['allow']==['Bash(ls:*)']" 2>/dev/null; then
-    echo "  PASS  replace ruflo (file rewrite + graceful claude-cli skip)"; PASS=$((PASS+1))
+  if python3 -c "import json; d=json.load(open('$REPLACE_DIR/inner/.claude/settings.json')); assert list(d['mcpServers'].keys())==['flo'] and d['enabledMcpjsonServers']==['flo'] and d['permissions']['allow']==['Bash(ls:*)']" 2>/dev/null; then
+    echo "  PASS  replace ruflo (settings.json rewrite + graceful claude-cli skip)"; PASS=$((PASS+1))
   else
-    echo "  FAIL  replace ruflo: file content unexpected"; FAIL=$((FAIL+1))
+    echo "  FAIL  replace ruflo: settings.json content unexpected"; FAIL=$((FAIL+1))
   fi
 else
   echo "  FAIL  replace ruflo: expected 'claude CLI not on PATH' message"; FAIL=$((FAIL+1))
+fi
+# Verify the parent .mcp.json was also cleaned (the walk-up fix)
+if python3 -c "import json; d=json.load(open('$REPLACE_DIR/.mcp.json')); assert d['mcpServers']=={}" 2>/dev/null; then
+  echo "  PASS  replace ruflo (parent .mcp.json walk-up cleanup)"; PASS=$((PASS+1))
+else
+  echo "  FAIL  replace ruflo: parent .mcp.json not cleaned"; FAIL=$((FAIL+1))
 fi
 
 # Auto-ADR: trigger via flo adr draft + verify file lands
