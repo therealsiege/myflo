@@ -1,9 +1,16 @@
 import "server-only";
 
+import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+
+const TAIL_CHUNK_SIZE = 8 * 1024;
+const MAX_TAIL_BYTES = 1 * 1024 * 1024;
+const ITEM_START_RE = /▶\s+#(\d+):\s*(.*?)\s*$/;
+const ITEM_END_RE = /▼\s+#(\d+)\s+done\b/;
+const CAP_REACHED_RE = /wall-clock cap reached/i;
 
 export interface ReposConfig {
   defaults: Record<string, unknown>;
@@ -39,9 +46,37 @@ export interface ItemResult {
   url: string;
 }
 
+export interface RunOutcomeCounts {
+  [status: string]: number;
+}
+
+export interface RunSummary {
+  date: string;
+  stamp: string;
+  logDir: string;
+  itemCount: number;
+  outcomes: RunOutcomeCounts;
+  startedAt: string | null;
+  endedAt: string | null;
+}
+
+export interface RunItemDetail extends ItemResult {
+  logPath: string | null;
+  planPath: string | null;
+  reviewPath: string | null;
+}
+
+export interface RunDetail {
+  stamp: string;
+  logDir: string;
+  items: RunItemDetail[];
+}
+
 export interface DesktopReport {
   filename: string;
   date: string;
+  bytes: number;
+  mtime: string;
 }
 
 const RUN_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -282,6 +317,238 @@ function parseItemResult(raw: string): ItemResult | null {
   };
 }
 
+export function assertRunStamp(stamp: string): void {
+  if (typeof stamp !== "string" || !RUN_STAMP_RE.test(stamp)) {
+    throw new Error(
+      `invalid run stamp: ${JSON.stringify(stamp)} (expected YYYYMMDD-HHMMSS)`,
+    );
+  }
+}
+
+interface RunItemFiles {
+  result: string;
+  log: string | null;
+  plan: string | null;
+  review: string | null;
+}
+
+const ISSUE_RESULT_RE = /^issue-(\d+)\.result\.json$/;
+
+async function collectRunItemFiles(runDir: string): Promise<RunItemFiles[]> {
+  const home = resolveSiegeHome();
+  const itemsDir = await resolveSafePath(path.join(runDir, "items"), home);
+  const repoDirs = await readDirIfPresent(itemsDir);
+
+  const files: RunItemFiles[] = [];
+  for (const repoDir of repoDirs) {
+    const repoPath = await resolveSafePath(path.join(itemsDir, repoDir), home);
+    const stat = await fsp.stat(repoPath).catch(() => null);
+    if (!stat?.isDirectory()) continue;
+
+    const entries = await readDirIfPresent(repoPath);
+    const entrySet = new Set(entries);
+    for (const f of entries) {
+      const m = ISSUE_RESULT_RE.exec(f);
+      if (!m) continue;
+      const issueNum = m[1];
+      const resultPath = await resolveSafePath(path.join(repoPath, f), home);
+      const logName = `issue-${issueNum}.log`;
+      const planName = `issue-${issueNum}.plan.json`;
+      const reviewName = `issue-${issueNum}.review.json`;
+      files.push({
+        result: resultPath,
+        log: entrySet.has(logName)
+          ? await resolveSafePath(path.join(repoPath, logName), home)
+          : null,
+        plan: entrySet.has(planName)
+          ? await resolveSafePath(path.join(repoPath, planName), home)
+          : null,
+        review: entrySet.has(reviewName)
+          ? await resolveSafePath(path.join(repoPath, reviewName), home)
+          : null,
+      });
+    }
+  }
+  return files;
+}
+
+async function summarizeRun(date: string, run: RunInfo): Promise<RunSummary> {
+  const files = await collectRunItemFiles(run.logDir);
+  const outcomes: RunOutcomeCounts = {};
+  let itemCount = 0;
+  let startedMs: number | null = null;
+  let endedMs: number | null = null;
+
+  for (const f of files) {
+    const raw = await readTextIfPresent(f.result);
+    if (raw === null) continue;
+    const parsed = parseItemResult(raw);
+    if (!parsed) continue;
+    itemCount += 1;
+    const status = parsed.status || "unknown";
+    outcomes[status] = (outcomes[status] ?? 0) + 1;
+
+    const stat = await fsp.stat(f.result).catch(() => null);
+    if (stat) {
+      const ms = stat.mtimeMs;
+      if (startedMs === null || ms < startedMs) startedMs = ms;
+      if (endedMs === null || ms > endedMs) endedMs = ms;
+    }
+  }
+
+  return {
+    date,
+    stamp: run.stamp,
+    logDir: run.logDir,
+    itemCount,
+    outcomes,
+    startedAt: startedMs === null ? null : new Date(startedMs).toISOString(),
+    endedAt: endedMs === null ? null : new Date(endedMs).toISOString(),
+  };
+}
+
+export async function listRecentRuns(limit = 30): Promise<RunSummary[]> {
+  if (
+    typeof limit !== "number" ||
+    !Number.isInteger(limit) ||
+    limit < 1
+  ) {
+    throw new Error("limit must be a positive integer");
+  }
+
+  const summaries: RunSummary[] = [];
+  const dates = await listRunDates();
+  for (const date of dates) {
+    const runs = await listRuns(date);
+    for (const run of runs) {
+      summaries.push(await summarizeRun(date, run));
+      if (summaries.length >= limit) {
+        summaries.sort((a, b) => (a.stamp < b.stamp ? 1 : a.stamp > b.stamp ? -1 : 0));
+        return summaries.slice(0, limit);
+      }
+    }
+  }
+  summaries.sort((a, b) => (a.stamp < b.stamp ? 1 : a.stamp > b.stamp ? -1 : 0));
+  return summaries;
+}
+
+export class RunNotFoundError extends Error {
+  readonly stamp: string;
+  constructor(stamp: string) {
+    super(`run not found: ${stamp}`);
+    this.name = "RunNotFoundError";
+    this.stamp = stamp;
+  }
+}
+
+export async function getRunDetail(stamp: string): Promise<RunDetail> {
+  assertRunStamp(stamp);
+
+  const home = resolveSiegeHome();
+  const logsRoot = await resolveSafePath(path.join(home, "logs"), home);
+  const dates = (await readDirIfPresent(logsRoot))
+    .filter((name) => RUN_DATE_RE.test(name))
+    .sort()
+    .reverse();
+
+  let runDir: string | null = null;
+  for (const date of dates) {
+    const candidate = await resolveSafePath(
+      path.join(logsRoot, date, stamp),
+      home,
+    );
+    const stat = await fsp.stat(candidate).catch(() => null);
+    if (stat?.isDirectory()) {
+      runDir = candidate;
+      break;
+    }
+  }
+
+  if (runDir === null) throw new RunNotFoundError(stamp);
+
+  const files = await collectRunItemFiles(runDir);
+  const items: RunItemDetail[] = [];
+  for (const f of files) {
+    const raw = await readTextIfPresent(f.result);
+    if (raw === null) continue;
+    const parsed = parseItemResult(raw);
+    if (!parsed) continue;
+    items.push({
+      ...parsed,
+      logPath: f.log,
+      planPath: f.plan,
+      reviewPath: f.review,
+    });
+  }
+  items.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
+
+  return { stamp, logDir: runDir, items };
+}
+
+export interface LastAttempt {
+  date: string;
+  stamp: string;
+  status: string;
+}
+
+const REPO_SAFE_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+export function toRepoSafe(repo: string): string {
+  if (typeof repo !== "string" || !REPO_SAFE_RE.test(repo)) {
+    throw new Error(
+      `invalid repo: ${JSON.stringify(repo)} (expected "owner/name")`,
+    );
+  }
+  return repo.replace("/", "_");
+}
+
+export async function getLastAttempt(
+  repo: string,
+  issueNumber: number,
+): Promise<LastAttempt | null> {
+  if (
+    typeof issueNumber !== "number" ||
+    !Number.isInteger(issueNumber) ||
+    issueNumber < 1
+  ) {
+    throw new Error("issueNumber must be a positive integer");
+  }
+  const repoSafe = toRepoSafe(repo);
+  const home = resolveSiegeHome();
+  const logsRoot = await resolveSafePath(path.join(home, "logs"), home);
+  const dates = await readDirIfPresent(logsRoot);
+  const sortedDates = dates
+    .filter((name) => RUN_DATE_RE.test(name))
+    .sort()
+    .reverse();
+
+  const resultFile = `issue-${issueNumber}.result.json`;
+
+  for (const date of sortedDates) {
+    const dateDir = await resolveSafePath(
+      path.join(logsRoot, date),
+      home,
+    );
+    const stamps = (await readDirIfPresent(dateDir))
+      .filter((name) => RUN_STAMP_RE.test(name))
+      .sort()
+      .reverse();
+
+    for (const stamp of stamps) {
+      const candidate = await resolveSafePath(
+        path.join(dateDir, stamp, "items", repoSafe, resultFile),
+        home,
+      );
+      const raw = await readTextIfPresent(candidate);
+      if (raw === null) continue;
+      const parsed = parseItemResult(raw);
+      if (!parsed) continue;
+      return { date, stamp, status: parsed.status };
+    }
+  }
+  return null;
+}
+
 export async function readDesktopReports(): Promise<DesktopReport[]> {
   const desktop = resolveDesktop();
   const entries = await readDirIfPresent(desktop);
@@ -291,7 +558,14 @@ export async function readDesktopReports(): Promise<DesktopReport[]> {
     if (!m) continue;
     const full = await resolveSafePath(path.join(desktop, filename), desktop);
     const stat = await fsp.stat(full).catch(() => null);
-    if (stat?.isFile()) reports.push({ filename, date: m[1] });
+    if (stat?.isFile()) {
+      reports.push({
+        filename,
+        date: m[1],
+        bytes: stat.size,
+        mtime: new Date(stat.mtimeMs).toISOString(),
+      });
+    }
   }
   reports.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   return reports;
@@ -339,4 +613,368 @@ export async function getOvernightStartedAtMs(): Promise<number | null> {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
   }
+}
+
+const REPO_NAME_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const DEFAULT_START_POLL_TIMEOUT_MS = 5_000;
+const DEFAULT_START_POLL_INTERVAL_MS = 100;
+
+function positiveIntFromEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim().length === 0) return fallback;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
+export class ConflictError extends Error {
+  readonly pids: number[];
+  constructor(message: string, pids: number[]) {
+    super(message);
+    this.name = "ConflictError";
+    this.pids = pids;
+  }
+}
+
+export interface StartSiegeOptions {
+  dryRun?: boolean;
+  maxItems?: number;
+  repos?: string[];
+  watch?: boolean;
+}
+
+export interface StartSiegeResult {
+  runStamp: string;
+  logDir: string;
+  pids: number[];
+}
+
+export function buildStartArgs(opts: StartSiegeOptions): string[] {
+  const args: string[] = [];
+
+  if (opts.dryRun !== undefined && typeof opts.dryRun !== "boolean") {
+    throw new Error("dryRun must be a boolean");
+  }
+  if (opts.dryRun === true) args.push("--dry-run");
+
+  if (opts.watch !== undefined && typeof opts.watch !== "boolean") {
+    throw new Error("watch must be a boolean");
+  }
+  if (opts.watch === true) args.push("--watch");
+
+  if (opts.maxItems !== undefined) {
+    if (
+      typeof opts.maxItems !== "number" ||
+      !Number.isInteger(opts.maxItems) ||
+      opts.maxItems < 1
+    ) {
+      throw new Error("maxItems must be a positive integer");
+    }
+    args.push("--max-items", String(opts.maxItems));
+  }
+
+  if (opts.repos !== undefined) {
+    if (!Array.isArray(opts.repos) || opts.repos.length === 0) {
+      throw new Error("repos must be a non-empty array of strings");
+    }
+    for (const r of opts.repos) {
+      if (typeof r !== "string" || !REPO_NAME_RE.test(r)) {
+        throw new Error(
+          `invalid repo: ${JSON.stringify(r)} (expected "owner/name")`,
+        );
+      }
+    }
+    args.push("--repos", opts.repos.join(","));
+  }
+
+  return args;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function pollForPids(
+  timeoutMs: number,
+  intervalMs: number,
+): Promise<number[]> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const found = await getActivePid();
+    if (found && found.length > 0) return found;
+    await sleep(intervalMs);
+  }
+  const final = await getActivePid();
+  return final ?? [];
+}
+
+async function resolveLatestRun(): Promise<RunInfo | null> {
+  const dates = await listRunDates();
+  for (const date of dates) {
+    const runs = await listRuns(date);
+    if (runs.length > 0) return runs[0];
+  }
+  return null;
+}
+
+export async function startSiege(
+  opts: StartSiegeOptions = {},
+): Promise<StartSiegeResult> {
+  const args = buildStartArgs(opts);
+
+  const existing = await getActivePid();
+  if (existing && existing.length > 0) {
+    throw new ConflictError("siege already running", existing);
+  }
+
+  const home = resolveSiegeHome();
+  const startBin = path.join(home, "bin", "start");
+
+  const child = spawn(startBin, args, {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+
+  const timeoutMs = positiveIntFromEnv(
+    "SIEGE_START_POLL_TIMEOUT_MS",
+    DEFAULT_START_POLL_TIMEOUT_MS,
+  );
+  const intervalMs = positiveIntFromEnv(
+    "SIEGE_START_POLL_INTERVAL_MS",
+    DEFAULT_START_POLL_INTERVAL_MS,
+  );
+  const pids = await pollForPids(timeoutMs, intervalMs);
+  if (pids.length === 0) {
+    throw new Error(
+      `siege start: no pids appeared within ${timeoutMs}ms`,
+    );
+  }
+
+  const latest = await resolveLatestRun();
+  if (latest === null) {
+    throw new Error("siege start: no run directory found");
+  }
+  return { runStamp: latest.stamp, logDir: latest.logDir, pids };
+}
+
+const KILL_TIMEOUT_MS = 35_000;
+const KILL_PIDS_LINE_RE =
+  /killing\s+\d+\s+siege\s+process\(es\):\s*(.+)/i;
+
+export type KillSiegeMethod = "graceful" | "force" | "noop";
+
+export interface KillSiegeResult {
+  killed: number[];
+  method: KillSiegeMethod;
+}
+
+function parseKilledPids(stdout: string): number[] {
+  const m = KILL_PIDS_LINE_RE.exec(stdout);
+  if (!m) return [];
+  const pids: number[] = [];
+  for (const token of m[1].trim().split(/\s+/)) {
+    const n = Number(token);
+    if (Number.isInteger(n) && n > 0) pids.push(n);
+  }
+  return pids;
+}
+
+function runKillScript(
+  bin: string,
+  args: string[],
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      bin,
+      args,
+      { timeout: KILL_TIMEOUT_MS, encoding: "utf8" },
+      (err, stdout, stderr) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve({ stdout, stderr });
+      },
+    );
+  });
+}
+
+export async function killSiege(force = false): Promise<KillSiegeResult> {
+  const home = resolveSiegeHome();
+  const killBin = path.join(home, "bin", "kill");
+  const args = force ? ["--force"] : [];
+
+  const { stdout } = await runKillScript(killBin, args);
+  const killed = parseKilledPids(stdout);
+  if (killed.length === 0) {
+    return { killed: [], method: "noop" };
+  }
+  return { killed, method: force ? "force" : "graceful" };
+}
+
+export interface TailedLog {
+  path: string;
+  lines: string[];
+  size: number;
+  updatedAt: string;
+}
+
+export interface CurrentItem {
+  issue: number;
+  title: string;
+}
+
+async function readTailBytes(
+  fd: fsp.FileHandle,
+  size: number,
+  maxBytes: number,
+): Promise<string> {
+  const start = Math.max(0, size - maxBytes);
+  const length = size - start;
+  if (length <= 0) return "";
+  const buf = Buffer.alloc(length);
+  await fd.read(buf, 0, length, start);
+  return buf.toString("utf8");
+}
+
+export async function tailFile(
+  filePath: string,
+  maxLines: number,
+): Promise<TailedLog> {
+  if (typeof maxLines !== "number" || !Number.isInteger(maxLines) || maxLines < 1) {
+    throw new Error("maxLines must be a positive integer");
+  }
+  const home = resolveSiegeHome();
+  const logsRoot = path.join(home, "logs");
+  const safe = await resolveSafePath(filePath, logsRoot);
+
+  const fd = await fsp.open(safe, "r");
+  try {
+    const stat = await fd.stat();
+    const size = stat.size;
+    if (size === 0) {
+      return {
+        path: safe,
+        lines: [],
+        size: 0,
+        updatedAt: new Date(stat.mtimeMs).toISOString(),
+      };
+    }
+
+    let collected = "";
+    let bytesRead = 0;
+    let cursor = size;
+    while (cursor > 0 && bytesRead < MAX_TAIL_BYTES) {
+      const chunkSize = Math.min(TAIL_CHUNK_SIZE, cursor);
+      const buf = Buffer.alloc(chunkSize);
+      const start = cursor - chunkSize;
+      await fd.read(buf, 0, chunkSize, start);
+      collected = buf.toString("utf8") + collected;
+      bytesRead += chunkSize;
+      cursor = start;
+
+      const newlineCount = countNewlines(collected);
+      if (newlineCount > maxLines) break;
+    }
+
+    let lines = collected.split(/\r?\n/);
+    if (lines.length > 0 && lines[lines.length - 1] === "") {
+      lines.pop();
+    }
+    if (lines.length > maxLines) {
+      lines = lines.slice(lines.length - maxLines);
+    }
+
+    return {
+      path: safe,
+      lines,
+      size,
+      updatedAt: new Date(stat.mtimeMs).toISOString(),
+    };
+  } finally {
+    await fd.close().catch(() => {});
+  }
+}
+
+function countNewlines(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s.charCodeAt(i) === 10) n += 1;
+  }
+  return n;
+}
+
+interface LogCandidate {
+  filePath: string;
+  mtimeMs: number;
+}
+
+async function listLogFilesInDir(dir: string): Promise<LogCandidate[]> {
+  const home = resolveSiegeHome();
+  const entries = await readDirIfPresent(dir);
+  const out: LogCandidate[] = [];
+  for (const name of entries) {
+    if (!name.endsWith(".log")) continue;
+    const full = await resolveSafePath(path.join(dir, name), home);
+    const stat = await fsp.stat(full).catch(() => null);
+    if (stat?.isFile()) out.push({ filePath: full, mtimeMs: stat.mtimeMs });
+  }
+  return out;
+}
+
+export async function findLatestRunLogPath(): Promise<string | null> {
+  const dates = await listRunDates();
+  for (const date of dates) {
+    const runs = await listRuns(date);
+    for (const run of runs) {
+      const candidates: LogCandidate[] = [];
+      candidates.push(...(await listLogFilesInDir(run.logDir)));
+      const home = resolveSiegeHome();
+      const itemsDir = await resolveSafePath(
+        path.join(run.logDir, "items"),
+        home,
+      );
+      const repos = await readDirIfPresent(itemsDir);
+      for (const repoDir of repos) {
+        const repoPath = await resolveSafePath(
+          path.join(itemsDir, repoDir),
+          home,
+        );
+        const stat = await fsp.stat(repoPath).catch(() => null);
+        if (!stat?.isDirectory()) continue;
+        candidates.push(...(await listLogFilesInDir(repoPath)));
+      }
+      if (candidates.length === 0) continue;
+      candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+      return candidates[0].filePath;
+    }
+  }
+  return null;
+}
+
+export function parseCurrentItem(lines: readonly string[]): CurrentItem | null {
+  const ended = new Set<number>();
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    const endMatch = ITEM_END_RE.exec(line);
+    if (endMatch) {
+      const n = Number(endMatch[1]);
+      if (Number.isInteger(n) && n > 0) ended.add(n);
+      continue;
+    }
+    const startMatch = ITEM_START_RE.exec(line);
+    if (!startMatch) continue;
+    const issue = Number(startMatch[1]);
+    if (!Number.isInteger(issue) || issue < 1) continue;
+    if (ended.has(issue)) continue;
+    return { issue, title: startMatch[2] };
+  }
+  return null;
+}
+
+export function isCapReached(lines: readonly string[]): boolean {
+  for (const line of lines) {
+    if (CAP_REACHED_RE.test(line)) return true;
+  }
+  return false;
 }

@@ -373,6 +373,84 @@ export async function listPRsForBranch(opts: {
   }));
 }
 
+const SIEGE_BRANCH_RE = /^siege\/issue-(\d+)$/;
+
+export async function listOpenSiegePRIssueNumbers(
+  repo: string,
+): Promise<number[]> {
+  assertRepo(repo);
+  const args: string[] = [
+    "pr",
+    "list",
+    "-R",
+    repo,
+    "--state",
+    "open",
+    "--limit",
+    String(MAX_LIMIT),
+    "--json",
+    "headRefName",
+  ];
+  const { stdout } = await runGh(args, DEFAULT_TIMEOUT_MS);
+  const raw = parseJsonArray<Record<string, unknown>>(stdout, "pr list");
+  const numbers: number[] = [];
+  for (const o of raw) {
+    const head = asString(o.headRefName);
+    const m = SIEGE_BRANCH_RE.exec(head);
+    if (m) numbers.push(Number(m[1]));
+  }
+  return numbers;
+}
+
+export interface RepoIssueResult {
+  repo: string;
+  issues: GhIssue[];
+  openSiegeIssueNumbers: number[];
+}
+
+export interface RepoFetchError {
+  repo: string;
+  message: string;
+}
+
+export interface IssuesAcrossReposResult {
+  items: RepoIssueResult[];
+  errors: RepoFetchError[];
+}
+
+export async function listIssuesAcrossRepos(
+  repos: ReadonlyArray<{ repo: string; search?: string; limit?: number }>,
+): Promise<IssuesAcrossReposResult> {
+  const settled = await Promise.allSettled(
+    repos.map(async (r) => {
+      const [issues, openSiegeIssueNumbers] = await Promise.all([
+        listIssues({ repo: r.repo, search: r.search, limit: r.limit }),
+        listOpenSiegePRIssueNumbers(r.repo),
+      ]);
+      return { repo: r.repo, issues, openSiegeIssueNumbers };
+    }),
+  );
+
+  const items: RepoIssueResult[] = [];
+  const errors: RepoFetchError[] = [];
+  for (let i = 0; i < settled.length; i++) {
+    const result = settled[i];
+    if (result.status === "fulfilled") {
+      items.push(result.value);
+    } else {
+      const reason = result.reason;
+      const message =
+        reason instanceof Error
+          ? reason.message
+          : typeof reason === "string"
+            ? reason
+            : "unknown gh failure";
+      errors.push({ repo: repos[i].repo, message });
+    }
+  }
+  return { items, errors };
+}
+
 export async function ghAuthStatus(): Promise<{
   authenticated: boolean;
   user?: string;

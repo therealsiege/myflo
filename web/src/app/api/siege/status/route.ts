@@ -2,14 +2,21 @@ import "server-only";
 
 import { ghAuthStatus } from "@/lib/gh";
 import {
+  findLatestRunLogPath,
   getActivePid,
   getOvernightStartedAtMs,
+  isCapReached,
   listRunDates,
   listRuns,
+  parseCurrentItem,
+  tailFile,
+  type CurrentItem,
 } from "@/lib/siege";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+const STATUS_TAIL_LINES = 400;
 
 interface LatestRun {
   date: string;
@@ -22,6 +29,8 @@ interface StatusResponse {
   pids: number[];
   elapsedSec: number | null;
   latestRun: LatestRun | null;
+  currentItem: CurrentItem | null;
+  capReached: boolean;
   ghAuth: { authenticated: boolean; user?: string };
 }
 
@@ -44,14 +53,35 @@ async function resolveGhAuth(): Promise<StatusResponse["ghAuth"]> {
   }
 }
 
+interface LogInsight {
+  currentItem: CurrentItem | null;
+  capReached: boolean;
+}
+
+async function resolveLogInsight(): Promise<LogInsight> {
+  try {
+    const file = await findLatestRunLogPath();
+    if (file === null) return { currentItem: null, capReached: false };
+    const tail = await tailFile(file, STATUS_TAIL_LINES);
+    return {
+      currentItem: parseCurrentItem(tail.lines),
+      capReached: isCapReached(tail.lines),
+    };
+  } catch {
+    return { currentItem: null, capReached: false };
+  }
+}
+
 export async function GET(): Promise<Response> {
   try {
-    const [pidsRaw, startedAtMs, latestRun, ghAuth] = await Promise.all([
-      getActivePid(),
-      getOvernightStartedAtMs(),
-      resolveLatestRun(),
-      resolveGhAuth(),
-    ]);
+    const [pidsRaw, startedAtMs, latestRun, ghAuth, insight] =
+      await Promise.all([
+        getActivePid(),
+        getOvernightStartedAtMs(),
+        resolveLatestRun(),
+        resolveGhAuth(),
+        resolveLogInsight(),
+      ]);
 
     const pids = pidsRaw ?? [];
     const running = pids.length > 0;
@@ -65,6 +95,8 @@ export async function GET(): Promise<Response> {
       pids,
       elapsedSec,
       latestRun,
+      currentItem: running ? insight.currentItem : null,
+      capReached: insight.capReached,
       ghAuth,
     };
     return Response.json(body);
